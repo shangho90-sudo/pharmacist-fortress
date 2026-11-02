@@ -178,6 +178,23 @@ class AudioEngine {
       this.tone(600, 200, 0.2, 0.15, 'sine', 0.05);
     }
   }
+  strike(style: 'lightning' | 'beam' | 'sky') {
+    if (style === 'lightning') {
+      this.noise(0.35, 6000, 800, 0.6, 'highpass');
+      this.tone(90, 40, 0.4, 0.4, 'sawtooth');
+    } else {
+      this.tone(1200, 300, 0.5, 0.2, 'sine');
+      this.noise(0.5, 3000, 300, 0.4);
+    }
+  }
+  dragon() {
+    this.tone(120, 60, 1.0, 0.35, 'sawtooth');
+    this.noise(1.2, 900, 200, 0.4);
+  }
+  teleport() {
+    this.tone(200, 1400, 0.25, 0.18, 'triangle');
+    this.tone(1400, 300, 0.3, 0.12, 'sine', 0.2);
+  }
   land() {
     this.noise(0.12, 800, 200, 0.25);
   }

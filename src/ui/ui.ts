@@ -12,7 +12,8 @@ const h = (html: string): HTMLElement => {
 };
 
 /** 캐릭터 일러스트 (public/chars) */
-const portrait = (id: CharTypeId) => `chars/${id}.png`;
+const portrait = (id: CharTypeId) => `chars2/${id}_idle.png`;
+const battlePic = (id: CharTypeId) => `chars2/${id}_battle.png`;
 
 type Mode = 'ai' | 'local';
 
@@ -123,10 +124,12 @@ export class UI {
       const d = CHAR_TYPES[s[slot]];
       return `<div class="slot ${this.selSlot === slot ? 'on' : ''} ${slot}" data-slot="${slot}" style="--glow:${d.palette.glow}">
         <div class="tag">${slotName(slot)}</div>
-        <img src="${portrait(d.id)}" alt="${d.name}">
-        <div class="nm">${d.name}<span>${d.roman}</span></div>
-        <div class="ti">“${d.title}”</div>
-        <div class="sp"><b>필살기</b> ${d.specialName}<br><small>${d.specialDesc}</small></div>
+        <img src="${battlePic(d.id)}" alt="${d.name}">
+        <div class="nm">${d.name}<span>${d.roman} · ${d.role}</span></div>
+        <div class="ti">“${d.title}” · ${d.weaponName}</div>
+        <div class="sk"><i>기본</i><b>${d.basic.name}</b><small>${d.basic.desc}</small></div>
+        <div class="sk"><i>특수</i><b>${d.special.name}</b><small>${d.special.desc}</small></div>
+        <div class="sk ult"><i>필살</i><b>${d.ultimate.name}</b><small>${d.ultimate.desc}</small></div>
       </div>`;
     };
     const el = h(`
@@ -286,8 +289,9 @@ export class UI {
           <div class="midp">
             <div class="row1">
               <div class="np slots">
-                <button class="slot1 on" data-w="basic"><kbd>1</kbd><span class="ic">💊</span><span class="nm">기본탄</span><small>∞</small></button>
-                <button class="slot1" data-w="special"><kbd>2</kbd><span class="ic">✨</span><span class="nm spn">필살기</span><small class="spg">0%</small><i class="charge"></i></button>
+                <button class="slot1 on" data-w="basic"><kbd>1</kbd><span class="ic">💊</span><span class="nm b1n">기본탄</span><small>∞</small></button>
+                <button class="slot1" data-w="special"><kbd>2</kbd><span class="ic">💥</span><span class="nm sp2n">특수탄</span><small class="sp2g">READY</small></button>
+                <button class="slot1" data-w="ultimate"><kbd>3</kbd><span class="ic">✨</span><span class="nm spn">필살기</span><small class="spg">0%</small><i class="charge"></i></button>
               </div>
               <div class="np timep"><span>TIME</span><b class="tm">30</b></div>
             </div>
@@ -311,7 +315,7 @@ export class UI {
     void meter;
     el.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
-      const w = t.closest('[data-w]')?.getAttribute('data-w') as 'basic' | 'special' | undefined;
+      const w = t.closest('[data-w]')?.getAttribute('data-w') as 'basic' | 'special' | 'ultimate' | undefined;
       if (w) this.scene.selectWeapon(w);
       const a = t.closest('[data-a]')?.getAttribute('data-a');
       if (a === 'skip') this.scene.skipTurn();
@@ -500,18 +504,26 @@ export class UI {
     const da = cp.facing === 1 ? rad : Math.PI - rad;
     needle.setAttribute('x2', (61 + Math.cos(da) * 44).toFixed(1));
     needle.setAttribute('y2', (62 - Math.sin(da) * 44).toFixed(1));
-    // 무기 슬롯
-    const wb = el.querySelector('[data-w="basic"]') as HTMLElement;
-    const ws = el.querySelector('[data-w="special"]') as HTMLElement;
-    wb.classList.toggle('on', this.scene.selected === 'basic');
-    ws.classList.toggle('on', this.scene.selected === 'special');
-    ws.classList.toggle('locked', cp.gauge < MAX_GAUGE);
-    ws.classList.toggle('ready', cp.gauge >= MAX_GAUGE && this.scene.selected !== 'special' && local);
-    setW(ws.querySelector('.charge'), cp.gauge);
+    // 무기 슬롯: 기본탄 / 특수탄(재사용 대기) / 필살기(게이지)
     const def = CHAR_TYPES[cp.charType];
-    (ws.querySelector('.spn') as HTMLElement).textContent = def.specialName;
+    const wb = el.querySelector('[data-w="basic"]') as HTMLElement;
+    const w2 = el.querySelector('[data-w="special"]') as HTMLElement;
+    const ws = el.querySelector('[data-w="ultimate"]') as HTMLElement;
+    wb.classList.toggle('on', this.scene.selected === 'basic');
+    w2.classList.toggle('on', this.scene.selected === 'special');
+    ws.classList.toggle('on', this.scene.selected === 'ultimate');
+    (wb.querySelector('.b1n') as HTMLElement).textContent = def.basic.name;
+    wb.title = `기본탄 · ${def.basic.name}: ${def.basic.desc}`;
+    (w2.querySelector('.sp2n') as HTMLElement).textContent = def.special.name;
+    (w2.querySelector('.sp2g') as HTMLElement).textContent = cp.specialCd > 0 ? `${cp.specialCd}턴` : 'READY';
+    w2.classList.toggle('locked', cp.specialCd > 0);
+    w2.title = `특수탄 · ${def.special.name}: ${def.special.desc} (사용 후 3턴 대기)`;
+    ws.classList.toggle('locked', cp.gauge < MAX_GAUGE);
+    ws.classList.toggle('ready', cp.gauge >= MAX_GAUGE && this.scene.selected !== 'ultimate' && local);
+    setW(ws.querySelector('.charge'), cp.gauge);
+    (ws.querySelector('.spn') as HTMLElement).textContent = def.ultimate.name;
     (ws.querySelector('.spg') as HTMLElement).textContent = cp.gauge >= MAX_GAUGE ? 'READY' : `${cp.gauge}%`;
-    ws.title = `${def.specialName}: ${def.specialDesc}`;
+    ws.title = `필살기 · ${def.ultimate.name}: ${def.ultimate.desc}`;
     // TIME
     const tm = el.querySelector('.timep .tm') as HTMLElement;
     tm.textContent = timing ? String(sec) : '—';
@@ -641,7 +653,7 @@ export class UI {
           <tr><td>← → / A D</td><td>이동 (턴마다 이동 거리 제한) · 방향 전환</td></tr>
           <tr><td>↑ ↓ / W S</td><td>발사 각도 조절 (0°~90°)</td></tr>
           <tr><td>스페이스</td><td>누르고 있으면 파워 충전, 떼면 발사</td></tr>
-          <tr><td>1 / 2</td><td>기본탄 / 필살기 선택 (게이지 100 필요)</td></tr>
+          <tr><td>1 / 2 / 3</td><td>기본탄 / 특수탄(사용 후 3턴 대기) / 필살기(게이지 100)</td></tr>
           <tr><td>드래그</td><td>맵 둘러보기</td></tr>
           <tr><td>Esc</td><td>일시정지 · 설정</td></tr>
           <tr><td>모바일</td><td>왼쪽 ◀▶ 이동, 오른쪽 ▲▼ 각도, 발사 버튼을 누르고 떼기</td></tr>

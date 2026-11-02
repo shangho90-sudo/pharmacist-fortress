@@ -217,6 +217,116 @@ export class Effects {
     });
   }
 
+  /** 번개/레이저/하늘 공격: 하늘에서 지점으로 내리꽂힘 */
+  strike(x: number, y: number, style: 'lightning' | 'beam' | 'sky', color: string) {
+    const c = parseInt(color.slice(1), 16);
+    const top = y - 520;
+    const gfx = this.scene.add.graphics().setDepth(D_FX + 2).setBlendMode(Phaser.BlendModes.ADD);
+    const st = { t: 0 };
+    if (style === 'lightning') {
+      // 지그재그 번개 (매 프레임 갈라짐이 바뀜)
+      this.scene.tweens.add({
+        targets: st,
+        t: 1,
+        duration: 320,
+        onUpdate: () => {
+          gfx.clear();
+          for (const [wdt, col, al] of [[5, c, 0.5], [2, 0xffffff, 1]] as const) {
+            gfx.lineStyle(wdt, col, al * (1 - st.t));
+            gfx.beginPath();
+            let px = x,
+              py = top;
+            gfx.moveTo(px, py);
+            while (py < y) {
+              py = Math.min(y, py + 24 + Math.random() * 18);
+              px = x + (py < y ? (Math.random() - 0.5) * 34 : 0);
+              gfx.lineTo(px, py);
+            }
+            gfx.strokePath();
+          }
+        },
+        onComplete: () => gfx.destroy(),
+      });
+    } else {
+      const wdt = style === 'beam' ? 30 : 12;
+      this.scene.tweens.add({
+        targets: st,
+        t: 1,
+        duration: style === 'beam' ? 650 : 380,
+        onUpdate: () => {
+          gfx.clear();
+          const k = st.t < 0.2 ? st.t / 0.2 : 1 - (st.t - 0.2) / 0.8;
+          gfx.fillStyle(c, 0.35 * k).fillRect(x - wdt, top, wdt * 2, y - top);
+          gfx.fillStyle(0xffffff, 0.8 * k).fillRect(x - wdt * 0.3, top, wdt * 0.6, y - top);
+          gfx.fillStyle(0xffffff, 0.9 * k).fillCircle(x, y, wdt * 0.9);
+        },
+        onComplete: () => gfx.destroy(),
+      });
+    }
+    this.burst(x, y, 'fx_px', { speed: { min: 60, max: 220 }, lifespan: 380, scale: { start: 1.6, end: 0 }, tint: [0xffffff, c], blendMode: 'ADD' }, 14, 600);
+  }
+
+  /** 약물 드래곤: 지면을 따라 휩쓸며 이동하는 용 머리 + 불꽃 */
+  dragonSweep(x0: number, dir: 1 | -1, step: number, count: number, intervalMs: number, color: string, surface: (x: number) => number) {
+    const c = parseInt(color.slice(1), 16);
+    const head = this.scene.add.image(x0, surface(x0) - 26, 'fx_dragon').setDepth(D_FX + 3).setScale(dir * 2, 2);
+    const fire = this.scene.add.particles(0, 0, 'fx_soft', {
+      lifespan: 700,
+      speed: { min: 10, max: 60 },
+      scale: { start: 0.38, end: 0 },
+      alpha: { start: 0.8, end: 0 },
+      tint: [0xffffff, 0xe0c2ff, c, 0x5b1fc0],
+      blendMode: 'ADD',
+      emitting: false,
+    });
+    fire.setDepth(D_FX + 2);
+    const st = { t: 0 };
+    const total = count * intervalMs;
+    this.scene.tweens.add({
+      targets: st,
+      t: 1,
+      duration: total,
+      onUpdate: () => {
+        const x = x0 + dir * step * count * st.t;
+        const sy = surface(x);
+        const y = (sy > 0 ? sy : head.y + 26) - 26 + Math.sin(st.t * 18) * 6;
+        head.setPosition(x, y).setRotation(Math.sin(st.t * 18) * 0.15 * dir);
+        fire.emitParticleAt(x - dir * 14, y + 4, 3);
+      },
+      onComplete: () => {
+        this.scene.tweens.add({ targets: head, alpha: 0, y: head.y - 40, duration: 300, onComplete: () => head.destroy() });
+        this.scene.time.delayedCall(800, () => fire.destroy());
+      },
+    });
+  }
+
+  shadowPuff(x: number, y: number) {
+    this.burst(x, y, 'fx_smoke', { speed: { min: 20, max: 90 }, lifespan: 700, scale: { start: 0.3, end: 0.6 }, alpha: { start: 0.75, end: 0 }, tint: [0x1a0a2a, 0x3a1a5a, 0x7c3aed] }, 16, 900);
+    this.burst(x, y, 'fx_px', { speed: { min: 60, max: 160 }, lifespan: 400, scale: { start: 1.4, end: 0 }, tint: [0xc084fc, 0xffffff], blendMode: 'ADD' }, 12, 600);
+  }
+
+  healAura(x: number, y: number) {
+    this.burst(x, y - 20, 'fx_px', { speedY: { min: -90, max: -30 }, speedX: { min: -30, max: 30 }, lifespan: 900, scale: { start: 2.2, end: 0 }, tint: [0x7dffa0, 0xffffff], blendMode: 'ADD' }, 18, 1100);
+    const ring = this.scene.add.image(x, y - 24, 'fx_soft').setTint(0x5cff7a).setBlendMode(Phaser.BlendModes.ADD).setDepth(D_FX).setScale(0.3).setAlpha(0.8);
+    this.scene.tweens.add({ targets: ring, scale: 1.2, alpha: 0, duration: 700, onComplete: () => ring.destroy() });
+  }
+
+  /** 특수탄/필살기 이름 외침 */
+  skillCall(x: number, y: number, name: string, color: string, ult: boolean) {
+    const t = this.scene.add
+      .text(x, y, ult ? `필살! ${name}` : name, { fontFamily: '"Noto Sans KR", sans-serif', fontSize: ult ? '17px' : '12px', fontStyle: '900', color: '#ffffff', stroke: color, strokeThickness: ult ? 5 : 4 })
+      .setOrigin(0.5)
+      .setDepth(52)
+      .setResolution(4)
+      .setScale(0.3);
+    this.scene.tweens.add({ targets: t, scale: 1, duration: 260, ease: 'Back.easeOut' });
+    this.scene.tweens.add({ targets: t, y: y - 24, alpha: 0, delay: 1000, duration: 500, onComplete: () => t.destroy() });
+    if (ult) {
+      const cam = this.scene.cameras.main;
+      cam.flash(180, 255, 255, 255, false);
+    }
+  }
+
   dust(x: number, y: number) {
     this.burst(x, y, 'fx_smoke', { speed: { min: 10, max: 40 }, angle: { min: 180, max: 360 }, lifespan: 500, scale: { start: 0.12, end: 0.3 }, alpha: { start: 0.5, end: 0 }, tint: 0xc8b8a0 }, 6, 700);
   }

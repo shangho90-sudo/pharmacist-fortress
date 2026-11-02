@@ -1168,3 +1168,57 @@ button {
     transform: translateY(-20px);
   }
 }
+
+.slot .sk {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: calc(var(--u) * 0.5);
+  text-align: left;
+  margin-top: calc(var(--u) * 0.35);
+  font-size: calc(var(--u) * 0.95);
+}
+.slot .sk i {
+  grid-row: span 2;
+  align-self: center;
+  font-style: normal;
+  font-weight: 900;
+  font-size: calc(var(--u) * 0.75);
+  padding: 2px calc(var(--u) * 0.4);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.slot .sk.ult i {
+  background: #ffd23f;
+  color: #2a1400;
+}
+.slot .sk b {
+  color: var(--accent);
+}
+.slot .sk small {
+  color: var(--dim);
+  font-size: calc(var(--u) * 0.78);
+}
+.slot img {
+  height: calc(var(--u) * 11) !important;
+}
+.slot {
+  width: calc(var(--u) * 21) !important;
+  padding: calc(var(--u) * 0.6) calc(var(--u) * 0.8) !important;
+}
+.slot .sp {
+  display: none;
+}
+.slot1 .nm {
+  font-size: calc(var(--u) * 1) !important;
+}
+.slot1 .ic {
+  font-size: calc(var(--u) * 1.6) !important;
+}
+.slot1 {
+  padding: 0 calc(var(--u) * 0.5) !important;
+  gap: calc(var(--u) * 0.4) !important;
+}
+.pcard .face {
+  background-position: 50% 4% !important;
+  background-size: 170% auto !important;
+}

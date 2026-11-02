@@ -8,7 +8,7 @@ const { chromium } = require('playwright');
   await p.goto(process.argv[2] || 'http://127.0.0.1:5173/');
   await p.waitForTimeout(2500);
   await p.click('text=AI 대전'); await p.waitForTimeout(300);
-  await p.click('.card[data-slot=p1][data-id=yong]');
+  await p.click('.tile[data-id=cheol]'); await p.click('.tile[data-id=du]');
   await p.click('text=어려움');
   await p.click('text=전투 시작!');
   let shot = 0;
@@ -22,7 +22,7 @@ const { chromium } = require('playwright');
       const g0 = await p.evaluate(() => { const c = window.__pf.scene.game2.currentPlayer; return { facing: c.facing, angle: c.angle, gauge: c.gauge }; });
       if (g0.facing !== plan.facing) { const k = plan.facing > 0 ? 'ArrowRight' : 'ArrowLeft'; await p.keyboard.down(k); await p.waitForTimeout(60); await p.keyboard.up(k); }
       await p.evaluate((a) => window.__pf.scene.game2.setAngle(a), plan.angle);
-      if (g0.gauge >= 100) await p.keyboard.press('2');
+      if (g0.gauge >= 100) await p.keyboard.press('3'); else await p.keyboard.press('2');
       await p.keyboard.down('Space');
       await p.waitForTimeout(plan.power / 100 * 2000);
       await p.keyboard.up('Space');

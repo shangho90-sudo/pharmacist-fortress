@@ -245,7 +245,7 @@ describe('턴/게임 흐름', () => {
     g.step();
     expect(p.x).toBe(x);
     while (g.phase !== 'aiming') g.step();
-    expect(g.fire('special', 50)).toBe(false); // 게이지 부족
+    expect(g.fire('ultimate', 50)).toBe(false); // 게이지 부족
     expect(g.fire('basic', 50)).toBe(true);
     expect(g.fire('basic', 50)).toBe(false); // 중복 발사 불가
   });
@@ -309,7 +309,7 @@ describe('턴/게임 흐름', () => {
   });
 });
 
-describe('캐릭터별 필살기', () => {
+describe('캐릭터별 기본탄·특수탄·필살기', () => {
   const ready = (charType: any, seed = 11) => {
     const g = new Game({ seed, players: [
       { name: 'A', charType, team: 0, controller: 'human' },
@@ -319,50 +319,110 @@ describe('캐릭터별 필살기', () => {
     g.currentPlayer.gauge = 100;
     return g;
   };
+  const flyAll = (g: Game) => {
+    const evs: any[] = [];
+    let guard = 0;
+    while (g.phase === 'flying' && guard++ < 120 * 40) {
+      g.step();
+      evs.push(...g.events.splice(0));
+    }
+    return evs;
+  };
 
-  it('모든 캐릭터의 필살기가 오류 없이 발사·폭발하고 게이지가 초기화된다', async () => {
+  it('10명 × 3종(30개) 공격이 모두 오류 없이 발사·종료된다', async () => {
     const { CHAR_LIST } = await import('../src/core/characters');
     for (const id of CHAR_LIST) {
-      const g = ready(id);
-      expect(g.fire('special', 60)).toBe(true);
-      expect(g.players[0].gauge).toBe(0);
-      let guard = 0;
-      while (g.phase === 'flying' && guard++ < 120 * 30) g.step();
-      expect(g.phase).not.toBe('flying');
-      expect(g.events.some((e) => e.type === 'explode' || e.type === 'projectileOut')).toBe(true);
+      for (const kind of ['basic', 'special', 'ultimate'] as const) {
+        const g = ready(id);
+        g.setAngle(50);
+        expect(g.fire(kind, 62), `${id} ${kind}`).toBe(true);
+        const evs = flyAll(g);
+        expect(g.phase, `${id} ${kind}`).not.toBe('flying');
+        expect(evs.some((e) => ['explode', 'projectileOut', 'splash', 'teleport'].includes(e.type)), `${id} ${kind}`).toBe(true);
+      }
     }
+  }, 60000);
+
+  it('특수탄은 사용 후 3턴 동안 재사용할 수 없고, 필살기는 게이지를 소모한다', () => {
+    const g = ready('paeng');
+    expect(g.fire('special', 50)).toBe(true);
+    expect(g.players[0].specialCd).toBe(3);
+    const g2 = ready('paeng');
+    g2.currentPlayer.gauge = 50;
+    expect(g2.fire('ultimate', 50)).toBe(false);
+    g2.currentPlayer.gauge = 100;
+    expect(g2.fire('ultimate', 50)).toBe(true);
+    expect(g2.players[0].gauge).toBe(0);
   });
 
-  it('부채꼴 필살기는 지정 개수만큼 동시에 발사된다', () => {
+  it('부채꼴·연사 발사 수가 시트와 일치한다', () => {
     const g = ready('sagong');
     g.fire('special', 70);
-    expect(g.projectiles.length).toBe(5);
-    const g2 = ready('jo');
-    g2.fire('special', 70);
+    expect(g.projectiles.length).toBe(7);
+    const g2 = ready('seok');
+    g2.fire('basic', 70);
     expect(g2.projectiles.length).toBe(3);
+    const g3 = ready('jo');
+    g3.fire('special', 70);
+    let spawned = g3.events.splice(0).filter((e) => e.type === 'spawnProjectile').length;
+    for (let i = 0; i < 40; i++) {
+      g3.step();
+      spawned += g3.events.splice(0).filter((e) => e.type === 'spawnProjectile').length;
+    }
+    expect(spawned).toBe(3); // 연속 투척 3자루
   });
 
-  it('무풍 저격탄은 바람의 영향을 받지 않는다', () => {
+  it('데이터 스캔은 바람의 영향을 받지 않는다', () => {
     const shoot = (wind: number) => {
       const g = ready('cheol');
       g.wind = wind;
       g.setAngle(30);
-      g.fire('special', 60);
-      while (g.phase === 'flying') g.step();
-      const ex = g.events.find((e) => e.type === 'explode') as any;
+      g.fire('ultimate', 60);
+      const ex = flyAll(g).find((e) => e.type === 'explode');
       return ex ? Math.round(ex.x) : null;
     };
     expect(shoot(10)).toBe(shoot(-10));
   });
 
-  it('치유의 십자탄은 발사자의 체력을 회복한다', () => {
-    const g = ready('gu');
+  it('메가 힐링 버스트는 발사자를 회복하고 모든 적에게 내리꽂는다', () => {
+    const g = ready('seok');
     g.players[0].hp = 50;
     g.setAngle(60);
-    g.fire('special', 55);
-    while (g.phase === 'flying') g.step();
-    expect(g.events.some((e) => e.type === 'heal')).toBe(true);
+    g.fire('ultimate', 55);
+    const evs = flyAll(g);
+    expect(evs.some((e) => e.type === 'heal')).toBe(true);
+    expect(evs.some((e) => e.type === 'strike' && e.style === 'sky')).toBe(true);
     expect(g.players[0].hp).toBeGreaterThan(50);
+  });
+
+  it('섀도우 스텝은 착탄 지점으로 순간이동하고 다음 공격 피해가 1.5배', () => {
+    const g = ready('du');
+    const x0 = g.players[0].x;
+    g.setAngle(45);
+    g.fire('special', 45);
+    const evs = flyAll(g);
+    const tp = evs.find((e) => e.type === 'teleport');
+    expect(tp).toBeTruthy();
+    expect(Math.abs(g.players[0].x - x0)).toBeGreaterThan(30);
+    expect(g.players[0].buff).toBe(1.5);
+  });
+
+  it('유도탄은 적 방향으로 휘어진다', () => {
+    const g = ready('cheol');
+    const enemy = g.players[1];
+    g.setFacing(enemy.x > g.players[0].x ? 1 : -1);
+    g.setAngle(35);
+    g.fire('special', 60);
+    const evs = flyAll(g);
+    const ex = evs.filter((e) => e.type === 'explode');
+    const closest = Math.min(...ex.map((e: any) => Math.abs(e.x - enemy.x)));
+    const g2 = ready('cheol');
+    g2.setFacing(enemy.x > g2.players[0].x ? 1 : -1);
+    g2.setAngle(35);
+    g2.fire('basic', 60);
+    const ex2 = flyAll(g2).filter((e) => e.type === 'explode');
+    const closest2 = Math.min(...ex2.map((e: any) => Math.abs(e.x - enemy.x)));
+    expect(closest).toBeLessThan(closest2);
   });
 });
 

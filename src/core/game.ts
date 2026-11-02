@@ -20,8 +20,12 @@ import {
   WORLD_W,
 } from './constants';
 import { CHAR_TYPES, type CharTypeId } from './characters';
+
+/** 특수탄 재사용 대기 (내 턴 수) */
+export const SPECIAL_COOLDOWN = 3;
+const CAM_SURFACE_TOP = -2000;
 import { generateMap, type MapId, type MapInfo } from './mapgen';
-import { bodyCircle, launch, stepGravity, stepProjectile, stepWalk, type Circle, type Mover, type Projectile } from './physics';
+import { bodyCircle, hasGround, launch, stepGravity, stepProjectile, stepWalk, type Circle, type Mover, type Projectile } from './physics';
 import { Rng } from './rng';
 import type { Rect, Terrain } from './terrain';
 import { WEAPONS, type WeaponId } from './weapons';
@@ -51,6 +55,12 @@ export interface Player extends Mover {
   moveLeft: number;
   lastPower: number | null;
   deathCause: 'hp' | 'fall' | 'liquid' | null;
+  /** 특수탄 재사용까지 남은 내 턴 수 (0이면 사용 가능) */
+  specialCd: number;
+  /** 다음 공격 피해 배율 (섀도우 스텝) */
+  buff: number;
+  /** 이번 발사의 피해 배율 */
+  shotMult: number;
 }
 
 export interface LiveProjectile extends Projectile {
@@ -75,6 +85,10 @@ export type GameEvent =
   | { type: 'spawnProjectile'; id: number; weapon: WeaponId }
   | { type: 'land'; player: number }
   | { type: 'heal'; player: number; amount: number; hp: number }
+  | { type: 'strike'; x: number; y: number; style: 'lightning' | 'beam' | 'sky'; weapon: WeaponId; owner: number }
+  | { type: 'sweep'; x: number; y: number; dir: 1 | -1; step: number; count: number; interval: number; owner: number }
+  | { type: 'teleport'; player: number; fromX: number; fromY: number; toX: number; toY: number }
+  | { type: 'buff'; player: number; mult: number }
   | { type: 'timeout'; player: number }
   | { type: 'gameOver'; winnerTeam: number | null };
 
@@ -152,6 +166,9 @@ export class Game {
         moveLeft: MOVE_PER_TURN,
         lastPower: null,
         deathCause: null,
+        specialCd: 0,
+        buff: 1,
+        shotMult: 1,
       } satisfies Player;
     });
     // 첫 턴 시작 플레이어는 시드로 결정
@@ -172,31 +189,72 @@ export class Game {
     this.input = { ...this.input, ...input };
   }
 
-  /** 발사 명령. 조작 가능 상태가 아니면 무시(턴 전환 중 입력 오류 방지). */
-  fire(kind: 'basic' | 'special', power: number): boolean {
+  /** 발사 명령. 조작 가능 상태가 아니면 무시(턴 전환 중 입력 오류 방지).
+   *  kind: basic=기본탄(무제한), special=특수탄(3턴 재사용 대기), ultimate=필살기(게이지 100) */
+  fire(kind: 'basic' | 'special' | 'ultimate', power: number): boolean {
     if (!this.canControl || this.shotFiredThisTurn) return false;
     const p = this.currentPlayer;
-    let weapon: WeaponId = 'basic';
+    if (!p.grounded) return false;
+    const def = CHAR_TYPES[p.charType];
+    let weapon: WeaponId = def.basic.weapon;
     if (kind === 'special') {
+      if (p.specialCd > 0) return false;
+      weapon = def.special.weapon;
+      p.specialCd = SPECIAL_COOLDOWN;
+    } else if (kind === 'ultimate') {
       if (p.gauge < MAX_GAUGE) return false;
-      weapon = CHAR_TYPES[p.charType].special;
+      weapon = def.ultimate.weapon;
       p.gauge = 0;
     }
-    if (!p.grounded) return false;
     const pw = Math.max(0, Math.min(100, Math.round(power * 10) / 10));
-    const shots = WEAPONS[weapon].spread ?? [{ angle: 0, power: 1 }];
-    let first: Projectile | null = null;
-    for (const sh of shots) {
-      const proj = launch({ footX: p.x, footY: p.y, facing: p.facing, angle: Math.max(-10, Math.min(100, Math.round(p.angle) + sh.angle)), power: pw * sh.power });
-      first ??= proj;
+    p.shotMult = p.buff;
+    p.buff = 1;
+    const w = WEAPONS[weapon];
+    const angle = Math.round(p.angle);
+    const shoot = (da: number, pm: number) => {
+      const proj = launch({ footX: p.x, footY: p.y, facing: p.facing, angle: Math.max(-10, Math.min(100, angle + da)), power: pw * pm });
+      const sp = w.speedScale ?? 1;
+      proj.vx *= sp;
+      proj.vy *= sp;
       this.spawn(proj, weapon, p.id, p.facing);
+      return proj;
+    };
+    let first: Projectile;
+    if (w.burst) {
+      const bu = w.burst;
+      first = shoot(bu.angles[0] ?? 0, bu.powers[0] ?? 1);
+      for (let k = 1; k < bu.count; k++) {
+        const da = bu.angles[k % bu.angles.length] ?? 0,
+          pm = bu.powers[k % bu.powers.length] ?? 1;
+        this.schedule(k * bu.interval, () => {
+          if (p.alive) shoot(da, pm);
+        });
+      }
+    } else {
+      const shots = w.spread ?? [{ angle: 0, power: 1 }];
+      first = shoot(shots[0].angle, shots[0].power);
+      for (let k = 1; k < shots.length; k++) shoot(shots[k].angle, shots[k].power);
     }
     p.lastPower = pw;
     this.shotFiredThisTurn = true;
-    this.events.push({ type: 'fire', player: p.id, weapon, x: first!.x, y: first!.y, power: pw, angle: Math.round(p.angle) });
+    this.events.push({ type: 'fire', player: p.id, weapon, x: first.x, y: first.y, power: pw, angle });
     this.input = { move: 0, aim: 0 };
     this.setPhase('flying');
     return true;
+  }
+
+  /** n틱 뒤 실행 (발사 중 연사/낙뢰/화살비 등) — 등록 순서대로 결정론적으로 실행 */
+  private pending: { tick: number; seq: number; run: () => void }[] = [];
+  private seq = 0;
+  private schedule(delayTicks: number, run: () => void) {
+    this.pending.push({ tick: this.tick + Math.max(1, Math.round(delayTicks)), seq: this.seq++, run });
+  }
+  private runPending() {
+    if (!this.pending.length) return;
+    const due = this.pending.filter((p) => p.tick <= this.tick).sort((a, b) => a.tick - b.tick || a.seq - b.seq);
+    if (!due.length) return;
+    this.pending = this.pending.filter((p) => p.tick > this.tick);
+    for (const d of due) d.run();
   }
 
   /** 제자리에서 방향 전환 (조작 가능할 때만) */
@@ -247,8 +305,9 @@ export class Game {
         this.stepAiming();
         break;
       case 'flying':
+        this.runPending();
         this.stepProjectiles();
-        if (this.projectiles.length === 0) this.setPhase('settling');
+        if (this.projectiles.length === 0 && this.pending.length === 0) this.setPhase('settling');
         break;
       case 'settling': {
         const allSettled = this.players.every((p) => !p.alive || p.grounded);
@@ -297,11 +356,13 @@ export class Game {
 
   private stepProjectiles() {
     const bodies = this.bodies();
-    const spawned: { proj: Projectile; weapon: WeaponId; owner: number; facing: 1 | -1 }[] = [];
+    const impacts: { pr: LiveProjectile; x: number; y: number; direct: number }[] = [];
     this.projectiles = this.projectiles.filter((pr) => {
       pr.prevX = pr.x;
       pr.prevY = pr.y;
-      const hit = stepProjectile(pr, this.wind * (WEAPONS[pr.weapon].windFactor ?? 1), this.terrain, bodies, this.worldW, this.worldH, this.gravity);
+      const def = WEAPONS[pr.weapon];
+      if (def.homing) this.steerHoming(pr, def.homing);
+      const hit = stepProjectile(pr, this.wind * (def.windFactor ?? 1), this.terrain, bodies, this.worldW, this.worldH, this.gravity * (def.gravityScale ?? 1));
       // 물/용암에 빠짐
       if (!hit && this.map.liquidY !== null && pr.y >= this.map.liquidY && pr.vy > 0) {
         this.events.push({ type: 'splash', x: pr.x, y: this.map.liquidY, weapon: pr.weapon });
@@ -318,26 +379,128 @@ export class Game {
         this.events.push({ type: 'projectileOut', x: hit.x, y: hit.y });
         return false;
       }
-      this.explode(hit.x, hit.y, pr.weapon, pr.owner, hit.kind === 'char' ? hit.id : -1);
-      const def = WEAPONS[pr.weapon];
-      if (def.children) {
-        for (const c of def.children) {
-          spawned.push({
-            proj: { x: hit.x, y: hit.y - 6, vx: c.vx * pr.facing, vy: c.vy, age: 1 },
-            weapon: c.weapon,
-            owner: pr.owner,
-            facing: pr.facing,
-          });
-        }
-      }
+      impacts.push({ pr, x: hit.x, y: hit.y, direct: hit.kind === 'char' ? hit.id : -1 });
       return false;
     });
-    for (const s of spawned) {
-      // 자식 탄이 땅 속에서 생성되면 위로 올려준다
-      let y = s.proj.y;
-      for (let k = 0; k < 40 && this.terrain.isSolid(s.proj.x, y); k++) y -= 1;
-      s.proj.y = y;
-      this.spawn(s.proj, s.weapon, s.owner, s.facing);
+    for (const im of impacts) {
+      if (WEAPONS[im.pr.weapon].radius > 0) this.explode(im.x, im.y, im.pr.weapon, im.pr.owner, im.direct);
+      this.applyImpactFx(im.pr, im.x, im.y);
+    }
+  }
+
+  /** 가장 가까운 적 몸통을 향해 가속 (사칙연산·제곱근만 사용) */
+  private steerHoming(pr: LiveProjectile, accel: number) {
+    const owner = this.players[pr.owner];
+    let best: Player | null = null,
+      bd = Infinity;
+    for (const p of this.players) {
+      if (!p.alive || p.team === owner.team) continue;
+      const dx = p.x - pr.x,
+        dy = p.y - BODY_CENTER_Y - pr.y;
+      const d = dx * dx + dy * dy;
+      if (d < bd) {
+        bd = d;
+        best = p;
+      }
+    }
+    if (!best || pr.age < 20) return; // 발사 직후엔 그대로 날아감
+    const dx = best.x - pr.x,
+      dy = best.y - BODY_CENTER_Y - pr.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    pr.vx += (dx / len) * accel * DT;
+    pr.vy += (dy / len) * accel * DT;
+  }
+
+  /** 지표면 높이 (위에서부터 처음 만나는 땅). 없으면 -1 */
+  private surfaceAt(x: number): number {
+    return this.terrain.surfaceBelow(x, CAM_SURFACE_TOP);
+  }
+
+  private applyImpactFx(pr: LiveProjectile, x: number, y: number) {
+    const def = WEAPONS[pr.weapon];
+    const owner = this.players[pr.owner];
+    for (const fx of def.onImpact ?? []) {
+      switch (fx.kind) {
+        case 'children':
+          for (const c of fx.list) {
+            let sy = y - 6;
+            for (let k = 0; k < 40 && this.terrain.isSolid(x, sy); k++) sy -= 1;
+            this.spawn({ x, y: sy, vx: c.vx * pr.facing, vy: c.vy, age: 1 }, c.weapon, pr.owner, pr.facing);
+          }
+          break;
+        case 'rain':
+          fx.offsets.forEach((off, i) => {
+            this.schedule(fx.delayStep * (i + 1), () => {
+              const rx = x + off * pr.facing;
+              this.spawn({ x: rx, y: y - fx.height, vx: 0, vy: fx.vy, age: 1 }, fx.weapon, pr.owner, pr.facing);
+            });
+          });
+          break;
+        case 'strikes':
+          fx.offsets.forEach((off, i) => {
+            this.schedule(fx.delayStep * (i + 1), () => {
+              const sx = Math.round(x + off * pr.facing);
+              const top = this.surfaceAt(sx);
+              // 그 열에 서 있는 캐릭터가 있으면 캐릭터 먼저 맞음
+              let ty = top;
+              let direct = -1;
+              for (const p of this.players) {
+                if (!p.alive) continue;
+                if (Math.abs(p.x - sx) <= BODY_RADIUS && (ty < 0 || p.y - BODY_CENTER_Y * 2 < ty)) {
+                  ty = p.y - BODY_CENTER_Y;
+                  direct = p.id;
+                }
+              }
+              if (ty < 0) return;
+              this.events.push({ type: 'strike', x: sx, y: ty, style: fx.style, weapon: fx.weapon, owner: pr.owner });
+              this.explode(sx, ty, fx.weapon, pr.owner, direct);
+            });
+          });
+          break;
+        case 'sweep': {
+          const dir = pr.facing;
+          this.events.push({ type: 'sweep', x, y, dir, step: fx.step, count: fx.count, interval: fx.delayStep, owner: pr.owner });
+          for (let i = 1; i <= fx.count; i++) {
+            this.schedule(fx.delayStep * i, () => {
+              const sx = Math.round(x + dir * fx.step * i);
+              if (sx < 0 || sx >= this.worldW) return;
+              const top = this.surfaceAt(sx);
+              if (top < 0) return;
+              this.explode(sx, top, fx.weapon, pr.owner, -1);
+            });
+          }
+          break;
+        }
+        case 'global': {
+          const targets = this.players.filter((p) => p.alive && p.team !== owner.team);
+          targets.forEach((t, i) => {
+            this.schedule(fx.delayStep * (i + 1), () => {
+              if (!t.alive) return;
+              const tx = t.x,
+                ty = t.y - BODY_CENTER_Y;
+              this.events.push({ type: 'strike', x: tx, y: ty, style: 'sky', weapon: fx.weapon, owner: pr.owner });
+              this.explode(tx, ty, fx.weapon, pr.owner, t.id);
+            });
+          });
+          break;
+        }
+        case 'teleport': {
+          if (!owner.alive) break;
+          const tx = Math.max(12, Math.min(this.worldW - 12, x));
+          let ty = Math.floor(y);
+          for (let k = 0; k < 120 && hasGround(this.terrain, tx, ty - 1); k++) ty--;
+          this.events.push({ type: 'teleport', player: owner.id, fromX: owner.x, fromY: owner.y, toX: tx, toY: ty });
+          owner.x = tx;
+          owner.y = ty;
+          owner.vy = 0;
+          owner.grounded = false;
+          break;
+        }
+        case 'buff':
+          owner.buff = fx.mult;
+          this.events.push({ type: 'buff', player: owner.id, mult: fx.mult });
+          break;
+      }
     }
   }
 
@@ -349,7 +512,8 @@ export class Game {
     this.events.push({ type: 'explode', x, y, radius: def.radius, weapon, rect, owner, seed });
     for (const p of this.players) {
       if (!p.alive) continue;
-      const amount = computeDamage(def.damage, def.radius, x, y, p, p.id === directId);
+      const mult = this.players[owner]?.shotMult ?? 1;
+      const amount = Math.round(computeDamage(def.damage, def.radius, x, y, p, p.id === directId) * mult);
       if (amount <= 0) continue;
       p.hp = Math.max(0, p.hp - amount);
       this.events.push({ type: 'damage', player: p.id, amount, hp: p.hp, from: owner, x: p.x, y: p.y - BODY_CENTER_Y });
@@ -404,7 +568,12 @@ export class Game {
     this.turnNumber++;
     const p = this.players[idx];
     p.moveLeft = MOVE_PER_TURN;
-    if (!first) p.gauge = Math.min(MAX_GAUGE, p.gauge + 10);
+    if (!first) {
+      p.gauge = Math.min(MAX_GAUGE, p.gauge + 10);
+      if (p.specialCd > 0) p.specialCd--;
+    }
+    p.shotMult = 1;
+    this.pending = [];
     this.turnTicksLeft = TURN_TICKS;
     this.shotFiredThisTurn = false;
     this.input = { move: 0, aim: 0 };

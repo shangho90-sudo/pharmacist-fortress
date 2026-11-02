@@ -233,12 +233,15 @@ export function drawProjectile(look: ProjLook, color: string): HTMLCanvasElement
       return c;
     }
     case 'arrow': {
-      const c = makeCanvas(18, 6);
+      // 빛의 화살
+      const c = makeCanvas(22, 8);
       const ctx = c.getContext('2d')!;
-      px(ctx, 0, 1, 4, 4, '#ffffff');
-      px(ctx, 2, 2, 12, 2, '#7a5a2a');
-      px(ctx, 12, 1, 4, 4, color);
-      px(ctx, 16, 2, 2, 2, light);
+      px(ctx, 0, 2, 5, 4, light);
+      px(ctx, 2, 3, 14, 2, color);
+      px(ctx, 3, 3, 12, 1, '#ffffff');
+      px(ctx, 15, 1, 3, 6, color);
+      px(ctx, 18, 2, 2, 4, light);
+      px(ctx, 20, 3, 2, 2, '#ffffff');
       return c;
     }
     case 'axe': {
@@ -255,22 +258,65 @@ export function drawProjectile(look: ProjLook, color: string): HTMLCanvasElement
       return c;
     }
     case 'syringe': {
-      const c = makeCanvas(18, 8);
+      // 발광하는 주사기 단검
+      const c = makeCanvas(22, 8);
       const ctx = c.getContext('2d')!;
-      px(ctx, 0, 1, 2, 6, '#5a6a8a');
-      px(ctx, 2, 1, 11, 6, '#2b3a55');
-      px(ctx, 3, 2, 9, 4, color);
-      px(ctx, 3, 2, 9, 1, light);
-      px(ctx, 13, 3, 5, 2, '#d0d8e8');
+      px(ctx, 0, 2, 3, 4, '#1a1226');
+      px(ctx, 3, 1, 11, 6, '#1a1226');
+      px(ctx, 4, 2, 9, 4, color);
+      px(ctx, 4, 2, 9, 1, light);
+      px(ctx, 14, 2, 3, 4, '#3a2a50');
+      px(ctx, 17, 3, 5, 2, light);
+      px(ctx, 20, 3, 2, 2, '#ffffff');
+      return c;
+    }
+    case 'orb_cross': {
+      // 전기/에너지 구체 + 흰 십자
+      const c = makeCanvas(16, 16);
+      const ctx = c.getContext('2d')!;
+      ellipse(ctx, 8, 8, 7.8, 7.8, dark);
+      ellipse(ctx, 8, 8, 6.6, 6.6, color);
+      ellipse(ctx, 8, 8, 5, 5, light);
+      ellipse(ctx, 8, 8, 4, 4, color);
+      px(ctx, 7, 4, 2, 8, '#ffffff');
+      px(ctx, 4, 7, 8, 2, '#ffffff');
+      px(ctx, 4, 3, 2, 2, 'rgba(255,255,255,0.8)');
+      return c;
+    }
+    case 'dark_orb': {
+      const c = makeCanvas(16, 16);
+      const ctx = c.getContext('2d')!;
+      ellipse(ctx, 8, 8, 7.8, 7.8, '#140820');
+      ellipse(ctx, 8, 8, 6.4, 6.4, dark);
+      ellipse(ctx, 8, 8, 4.6, 4.6, color);
+      ellipse(ctx, 8, 8, 2.6, 2.6, light);
+      px(ctx, 5, 4, 2, 2, '#ffffff');
+      return c;
+    }
+    case 'big_axe': {
+      const c = makeCanvas(24, 24);
+      const ctx = c.getContext('2d')!;
+      px(ctx, 11, 1, 2, 22, '#3a2a28');
+      for (let y = -8; y <= 8; y++) {
+        const w = 9 - Math.round(Math.abs(y) * 0.55);
+        px(ctx, 13, 12 + y - 3, w, 1, y === -8 || y === 8 ? '#5a5a6a' : '#d8dce8');
+        px(ctx, 11 - w, 12 + y - 3, w, 1, y === -8 || y === 8 ? '#5a5a6a' : '#d8dce8');
+      }
+      px(ctx, 9, 6, 6, 6, '#1a1214');
+      px(ctx, 11, 7, 2, 4, color);
+      px(ctx, 10, 8, 4, 2, color);
       return c;
     }
     case 'cross': {
-      const c = makeCanvas(14, 14);
+      // 거대한 십자 에너지
+      const c = makeCanvas(18, 18);
       const ctx = c.getContext('2d')!;
-      ellipse(ctx, 7, 7, 6.8, 6.8, dark);
-      ellipse(ctx, 7, 7, 5.6, 5.6, color);
-      px(ctx, 6, 3, 2, 8, '#fff');
-      px(ctx, 3, 6, 8, 2, '#fff');
+      ellipse(ctx, 9, 9, 8.8, 8.8, dark);
+      ellipse(ctx, 9, 9, 7.6, 7.6, color);
+      px(ctx, 7, 2, 4, 14, '#ffffff');
+      px(ctx, 2, 7, 14, 4, '#ffffff');
+      px(ctx, 8, 3, 2, 12, light);
+      px(ctx, 3, 8, 12, 2, light);
       return c;
     }
     default: {
@@ -328,5 +374,45 @@ export function smokePuff(size: number): HTMLCanvasElement {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
   }
+  return c;
+}
+
+/** 약물 드래곤 머리 (오른쪽을 봄) */
+export function dragonHead(): HTMLCanvasElement {
+  const c = makeCanvas(40, 26);
+  const ctx = c.getContext('2d')!;
+  const D = '#2a0e52',
+    M = '#7c3aed',
+    L = '#c084fc',
+    H = '#f3e8ff';
+  // 갈기/뿔
+  for (let i = 0; i < 4; i++) {
+    px(ctx, 6 + i * 4, 4 - i, 3, 6, D);
+    px(ctx, 7 + i * 4, 5 - i, 1, 4, L);
+  }
+  px(ctx, 22, 0, 2, 7, H);
+  px(ctx, 24, 2, 2, 4, L);
+  // 머리
+  ellipse(ctx, 18, 13, 12, 8, D);
+  ellipse(ctx, 18, 13, 10.5, 6.8, M);
+  // 주둥이 + 윗턱
+  px(ctx, 26, 8, 12, 7, D);
+  px(ctx, 27, 9, 10, 5, M);
+  px(ctx, 27, 9, 10, 1, L);
+  px(ctx, 36, 10, 3, 2, D);
+  // 아래턱 (벌린 입)
+  px(ctx, 24, 17, 12, 4, D);
+  px(ctx, 25, 17, 10, 2, M);
+  px(ctx, 26, 15, 9, 2, '#ff9ae8');
+  // 이빨
+  for (let x = 27; x < 36; x += 3) {
+    px(ctx, x, 14, 1, 2, H);
+    px(ctx, x + 1, 16, 1, 1, H);
+  }
+  // 눈
+  px(ctx, 20, 9, 4, 3, '#ffe066');
+  px(ctx, 22, 9, 1, 3, '#2a0e52');
+  // 비늘 하이라이트
+  for (let x = 10; x < 24; x += 4) px(ctx, x, 15, 2, 1, L);
   return c;
 }

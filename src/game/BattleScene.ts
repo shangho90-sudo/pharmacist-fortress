@@ -6,10 +6,17 @@ import { Game, type GameEvent, type Player, type PlayerSetup } from '../core/gam
 import { cosDeg, sinDeg } from '../core/physics';
 import { WEAPONS, type WeaponId } from '../core/weapons';
 import { MAP_INFO, MAP_LIST, type MapId } from '../core/mapgen';
-import { CHAR_SCALE, drawGun, drawProjectile, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_RES, GUN_SCALE, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
+import { dragonHead, drawGun, drawProjectile, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_RES, GUN_SCALE, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
 import { audio } from './audio';
 import { buildForestLayers, buildPineLayer, buildSkyLayers, buildVolcanoLayers, cloudsCanvas, skyCanvas } from './background';
 import { Effects } from './effects';
+import SPRITES from '../../public/chars2/manifest.json';
+
+type FrameName = 'idle' | 'battle' | 'shoot';
+const SPR = SPRITES as Record<string, Record<FrameName, { w: number; h: number; ox: number }>>;
+/** 캐릭터 화면 높이(월드 px) */
+const CHAR_WORLD_H = 80;
+const charScale = (id: string) => CHAR_WORLD_H / SPR[id].idle.h;
 import { asteroidCanvas, earthCanvas, nebulaCanvas, shipCanvas, stationCanvas } from './spaceBg';
 import { TerrainView } from './terrainView';
 
@@ -59,6 +66,7 @@ interface CharView {
   blinkTimer: number;
   knock: number;
   fallen: boolean;
+  hitFlash: number;
 }
 
 type CamMode = 'player' | 'projectile' | 'point' | 'free';
@@ -94,7 +102,7 @@ export class BattleScene extends Phaser.Scene {
   charging = false;
   charge = 0;
   private chargeStart = 0;
-  selected: 'basic' | 'special' = 'basic';
+  selected: 'basic' | 'special' | 'ultimate' = 'basic';
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private lastTickSecond = -1;
 
@@ -110,7 +118,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   preload() {
-    for (const id of CHAR_LIST) this.load.image(`char_${id}`, `chars/${id}.png`);
+    for (const id of CHAR_LIST) for (const f of ['idle', 'battle', 'shoot']) this.load.image(`spr_${id}_${f}`, `chars2/${id}_${f}.png`);
     for (const id of MAP_LIST) {
       const bd = MAP_INFO[id].backdrop;
       if (bd) this.load.image(`bg_${bd}`, `bg/${bd}.jpg`);
@@ -122,7 +130,7 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#2a6f8c');
     this.makeTextures();
     // 일러스트(캐릭터·배경 사진)는 선형 필터, 픽셀아트(지형·무기·이펙트)는 최근접 필터
-    for (const id of CHAR_LIST) this.textures.get(`char_${id}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    for (const id of CHAR_LIST) for (const f of ['idle', 'battle', 'shoot']) this.textures.get(`spr_${id}_${f}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
     for (const id of MAP_LIST) {
       const bd = MAP_INFO[id].backdrop;
       if (bd && this.textures.exists(`bg_${bd}`)) this.textures.get(`bg_${bd}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
@@ -150,6 +158,7 @@ export class BattleScene extends Phaser.Scene {
     add('fx_px', pixelSquare(2));
     add('fx_smoke', smokePuff(64));
     add('fx_dot', softCircle(8, 0.3));
+    add('fx_dragon', dragonHead());
     const m = document.createElement('canvas');
     m.width = 11;
     m.height = 9;
@@ -459,7 +468,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private makeCharView(p: Player): CharView {
-    const body = this.add.image(p.x, p.y, `char_${p.charType}`).setOrigin(0.5, 1).setDepth(10).setScale(CHAR_SCALE);
+    const body = this.add.image(p.x, p.y, `spr_${p.charType}_idle`).setOrigin(SPR[p.charType].idle.ox, 1).setDepth(10).setScale(charScale(p.charType));
     const gun = this.add
       .image(p.x, p.y - MUZZLE_HEIGHT, `gun_${p.charType}`)
       .setOrigin(GUN_PIVOT_X / GUN_W, GUN_PIVOT_Y / GUN_H)
@@ -479,7 +488,7 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(41)
       .setResolution(6);
     const hpBar = this.add.graphics().setDepth(40);
-    return { body, gun, label, hpText, hpBar, shadow, shownHp: p.hp, lastX: p.x, walkDist: 0, hitTimer: 0, shootTimer: 0, blinkTimer: 0, knock: 0, fallen: false };
+    return { body, gun, label, hpText, hpBar, shadow, shownHp: p.hp, lastX: p.x, walkDist: 0, hitTimer: 0, shootTimer: 0, blinkTimer: 0, knock: 0, fallen: false, hitFlash: 0 };
   }
 
   // ───────────────────────── 입력 ─────────────────────────
@@ -497,12 +506,14 @@ export class BattleScene extends Phaser.Scene {
       space: 'SPACE',
       one: 'ONE',
       two: 'TWO',
+      three: 'THREE',
     }) as Record<string, Phaser.Input.Keyboard.Key>;
     kb.addCapture(['SPACE', 'UP', 'DOWN', 'LEFT', 'RIGHT']);
     this.keys.space.on('down', () => this.startCharge());
     this.keys.space.on('up', () => this.releaseCharge());
     this.keys.one.on('down', () => this.selectWeapon('basic'));
     this.keys.two.on('down', () => this.selectWeapon('special'));
+    this.keys.three.on('down', () => this.selectWeapon('ultimate'));
     // 드래그로 맵 둘러보기
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.dragging = { x: p.x, y: p.y, cx: this.camX, cy: this.camY };
@@ -532,9 +543,11 @@ export class BattleScene extends Phaser.Scene {
   setTouchAim(d: number) {
     this.touchAim = d;
   }
-  selectWeapon(w: 'basic' | 'special') {
+  selectWeapon(w: 'basic' | 'special' | 'ultimate') {
     if (!this.isLocalTurn()) return;
-    if (w === 'special' && this.game2.currentPlayer.gauge < MAX_GAUGE) return;
+    const cp = this.game2.currentPlayer;
+    if (w === 'ultimate' && cp.gauge < MAX_GAUGE) return;
+    if (w === 'special' && cp.specialCd > 0) return;
     this.selected = w;
     if (!this.silent) audio.click();
   }
@@ -614,7 +627,7 @@ export class BattleScene extends Phaser.Scene {
             ai.t = 0;
             this.charge = 0;
             this.charging = true;
-            if (ai.plan!.weapon === 'special') this.selected = 'special';
+            this.selected = ai.plan!.weapon;
           }
         } else ai.t = 0;
         break;
@@ -698,9 +711,13 @@ export class BattleScene extends Phaser.Scene {
         const v = this.views[e.player];
         v.shootTimer = 0.35;
         const a = p.facing === 1 ? -Phaser.Math.DegToRad(e.angle) : Math.PI + Phaser.Math.DegToRad(e.angle);
-        this.fx.muzzle(e.x, e.y, a, e.weapon !== 'basic');
+        const def = CHAR_TYPES[p.charType];
+        const isUlt = e.weapon === def.ultimate.weapon,
+          isSp = e.weapon === def.special.weapon;
+        this.fx.muzzle(e.x, e.y, a, isUlt || isSp);
+        if (isUlt || isSp) this.fx.skillCall(p.x, p.y - 104, isUlt ? def.ultimate.name : def.special.name, def.palette.glow, isUlt);
         if (sfx) {
-          audio.fire(e.weapon !== 'basic');
+          audio.fire(isUlt || isSp);
           audio.whistleStart();
         }
         this.camMode = 'projectile';
@@ -711,17 +728,21 @@ export class BattleScene extends Phaser.Scene {
         if (!pr) break;
         const owner = g.players[pr.owner];
         const col = this.weaponColor(e.weapon, owner.charType);
-        const img = this.add.image(pr.x, pr.y, `proj_${e.weapon}_${owner.charType}`).setDepth(20);
+        const wdef = WEAPONS[e.weapon];
+        const img = this.add.image(pr.x, pr.y, `proj_${e.weapon}_${owner.charType}`).setDepth(20).setScale(wdef.scale ?? 1);
         const c = Phaser.Display.Color.HexStringToColor(col).color;
-        const big = WEAPONS[e.weapon].look === 'big_capsule';
-        const trail = this.add.particles(0, 0, 'fx_soft', {
-          lifespan: e.weapon === 'basic' ? 380 : 520,
-          scale: { start: big ? 0.22 : 0.13, end: 0 },
-          alpha: { start: 0.55, end: 0 },
-          tint: e.weapon === 'basic' ? [0xffffff, 0xffd0d0] : [0xffffff, c],
-          blendMode: 'ADD',
-          emitting: false,
-        });
+        const big = (wdef.scale ?? 1) > 1.2 || wdef.look === 'big_capsule';
+        const tcfg: Record<string, Phaser.Types.GameObjects.Particles.ParticleEmitterConfig> = {
+          normal: { texture: 'fx_soft', lifespan: 420, scale: { start: big ? 0.22 : 0.13, end: 0 }, alpha: { start: 0.55, end: 0 }, tint: [0xffffff, c], blendMode: 'ADD' },
+          electric: { lifespan: 260, speed: { min: 20, max: 90 }, scale: { start: 1.6, end: 0 }, tint: [0xffffff, 0xbfe4ff, c], blendMode: 'ADD' },
+          shadow: { texture: 'fx_smoke', lifespan: 520, speed: { min: 5, max: 25 }, scale: { start: 0.14, end: 0.3 }, alpha: { start: 0.55, end: 0 }, tint: [0x1a0a2a, 0x3a1a5a, c] },
+          light: { lifespan: 480, speed: { min: 5, max: 30 }, scale: { start: 1.8, end: 0 }, tint: [0xffffff, 0xfff2a0, c], blendMode: 'ADD' },
+          heal: { lifespan: 600, speed: { min: 10, max: 40 }, scale: { start: 2, end: 0 }, tint: [0xffffff, 0xb0ffc0, c], blendMode: 'ADD' },
+          dragon: { texture: 'fx_soft', lifespan: 650, speed: { min: 10, max: 40 }, scale: { start: 0.32, end: 0 }, alpha: { start: 0.7, end: 0 }, tint: [0xffffff, 0xe0c2ff, c, 0x5b1fc0], blendMode: 'ADD' },
+        };
+        const kind = wdef.trail ?? 'normal';
+        const tc = tcfg[kind];
+        const trail = this.add.particles(0, 0, (tc as any).texture ?? 'fx_px', { ...tc, emitting: false });
         trail.setDepth(19);
         this.projSprites.set(e.id, { img, trail });
         break;
@@ -754,15 +775,45 @@ export class BattleScene extends Phaser.Scene {
         const src = g.players[e.from];
         v.knock = src && src.x > g.players[e.player].x ? -5 : 5;
         this.fx.damageText(e.x, e.y - 14, e.amount);
-        v.body.setTintFill(0xffffff);
-        this.time.delayedCall(70, () => v.body.clearTint().setTint(0xffa0a0));
-        this.time.delayedCall(260, () => v.body.clearTint());
+        // 피격 색: 붉은 틴트 (실루엣 전체가 하얗게 덮이지 않도록)
+        v.body.setTint(0xff6b6b);
+        v.hitFlash = 0.22;
         if (sfx) audio.hit();
         break;
       }
       case 'heal': {
         const p = g.players[e.player];
         this.fx.damageText(p.x, p.y - 30, e.amount, '#7dffa0', '+');
+        this.fx.healAura(p.x, p.y);
+        break;
+      }
+      case 'strike': {
+        const col = this.weaponColor(e.weapon, g.players[e.owner].charType);
+        this.fx.strike(e.x, e.y, e.style, col);
+        if (sfx) audio.strike(e.style);
+        break;
+      }
+      case 'sweep': {
+        const col = CHAR_TYPES[g.players[e.owner].charType].palette.glow;
+        this.fx.dragonSweep(e.x, e.dir, e.step, e.count, (e.interval / TICK_RATE) * 1000, col, (x) => g.terrain.surfaceBelow(x, -2000));
+        if (sfx) audio.dragon();
+        this.camMode = 'point';
+        this.camPoint = { x: e.x + e.dir * e.step * e.count * 0.5, y: e.y };
+        this.camHold = (e.count * e.interval) / TICK_RATE + 0.6;
+        break;
+      }
+      case 'teleport': {
+        this.fx.shadowPuff(e.fromX, e.fromY - 30);
+        this.fx.shadowPuff(e.toX, e.toY - 30);
+        const v = this.views[e.player];
+        v.body.setAlpha(0.2);
+        this.tweens.add({ targets: v.body, alpha: 1, duration: 450 });
+        if (sfx) audio.teleport();
+        break;
+      }
+      case 'buff': {
+        const p = g.players[e.player];
+        this.fx.bigText(p.x, p.y - 100, `다음 공격 ×${e.mult}`, '#d8b4fe');
         break;
       }
       case 'death': {
@@ -822,7 +873,7 @@ export class BattleScene extends Phaser.Scene {
       s.img.setPosition(x, y);
       if (WEAPONS[pr.weapon].look === 'axe' || WEAPONS[pr.weapon].look === 'cross') s.img.rotation += dt * 14 * pr.facing;
       else s.img.setRotation(Math.atan2(pr.vy, pr.vx));
-      s.trail.emitParticleAt(x, y, 1);
+      s.trail.emitParticleAt(x, y, WEAPONS[pr.weapon].trail === 'dragon' || WEAPONS[pr.weapon].trail === 'electric' ? 2 : 1);
       if (!this.silent && id === g.projectiles[0].id) audio.whistleUpdate(pr.vy);
     }
     // 캐릭터
@@ -835,6 +886,10 @@ export class BattleScene extends Phaser.Scene {
         v.gun.setVisible(false);
       }
       v.hitTimer = Math.max(0, v.hitTimer - dt);
+      if (v.hitFlash > 0) {
+        v.hitFlash -= dt;
+        if (v.hitFlash <= 0 && p.alive) v.body.clearTint();
+      }
       v.shootTimer = Math.max(0, v.shootTimer - dt);
       v.knock *= Math.pow(0.0005, dt);
       v.blinkTimer -= dt;
@@ -844,8 +899,9 @@ export class BattleScene extends Phaser.Scene {
       // 단일 일러스트 → 변형(스케일/기울기/점프)으로 애니메이션
       const isWinner = g.phase === 'over' && p.alive && g.winnerTeam === p.team;
       const walking = moved > 0.01 && p.grounded && p.alive;
-      let sx = CHAR_SCALE,
-        sy = CHAR_SCALE,
+      const cs = charScale(p.charType);
+      let sx = cs,
+        sy = cs,
         rot = 0,
         bx = p.x + v.knock,
         by = p.y;
@@ -873,13 +929,18 @@ export class BattleScene extends Phaser.Scene {
         sy *= 1 + br * 0.018;
         sx *= 1 - br * 0.01;
       }
-      v.body.setFlipX(p.facing === -1);
-      v.body.setScale(sx, sy);
+      // 프레임: 사격=공격, 내 턴(조준/충전/이동)=전투 자세, 그 외=대기
+      const myTurn = g.currentPlayer === p && (g.phase === 'aiming' || g.phase === 'turnStart');
+      const frame: FrameName = !p.alive || isWinner ? 'idle' : v.shootTimer > 0 ? 'shoot' : myTurn || walking ? 'battle' : 'idle';
+      const key = `spr_${p.charType}_${frame}`;
+      if (v.body.texture.key !== key) v.body.setTexture(key).setOrigin(SPR[p.charType][frame].ox, 1);
+      // 좌우 반전은 음수 스케일(발 중심 기준 대칭)
+      v.body.setScale(sx * p.facing, sy);
       v.body.setPosition(Math.round(bx), Math.round(by));
       v.body.rotation += (rot - v.body.rotation) * Math.min(1, dt * (p.alive ? 18 : 8));
       if (!p.alive) v.body.setTint(0x8a8a9a);
       // 무기
-      const showGun = p.alive && !isWinner;
+      const showGun = false; // 무기는 캐릭터 스프라이트에 포함
       v.gun.setVisible(showGun);
       if (showGun) {
         const recoil = v.shootTimer > 0 ? -3 * (v.shootTimer / 0.35) : 0;

@@ -1,0 +1,8 @@
+<!doctype html><html><body style="background:#4a7a5a;margin:0"><div id="o"></div><script type="module">
+import { buildCharacterFrames, drawProjectile } from '../src/game/art.ts';
+const o=document.getElementById('o');
+for (const id of ['paeng','yong']) { const f=buildCharacterFrames(id); for (const k in f){ const c=document.createElement('canvas'); const s=f[k]; c.width=s.width*6;c.height=s.height*6; const x=c.getContext('2d'); x.imageSmoothingEnabled=false; x.drawImage(s,0,0,c.width,c.height); c.style.margin='4px'; o.appendChild(c);} o.appendChild(document.createElement('br')); }
+for (const id of ['basic','mega_capsule','dragon_capsule','dragon_shard']) { const s=drawProjectile(id); const c=document.createElement('canvas'); c.width=s.width*6;c.height=s.height*6; const x=c.getContext('2d'); x.imageSmoothingEnabled=false; x.drawImage(s,0,0,c.width,c.height); c.style.margin='4px'; o.appendChild(c);}
+document.title='done';
+</script></body></html>
+<script type="module">import { portraitDataUrl } from '../src/game/art.ts'; for (const id of ['paeng','yong']) { const i=new Image(); i.src=portraitDataUrl(id,4); document.body.appendChild(i);} </script>

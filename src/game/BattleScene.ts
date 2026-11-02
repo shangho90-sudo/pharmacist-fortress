@@ -8,7 +8,7 @@ import { WEAPONS, type WeaponId } from '../core/weapons';
 import { MAP_INFO, MAP_LIST, type MapId } from '../core/mapgen';
 import { dragonHead, drawGun, drawProjectile, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_RES, GUN_SCALE, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
 import { audio } from './audio';
-import { buildForestLayers, buildPineLayer, buildSkyLayers, buildVolcanoLayers, cloudsCanvas, skyCanvas } from './background';
+import { buildForestLayers, buildMushroomLayer, buildPineLayer, sunRayCanvas, buildSkyLayers, buildVolcanoLayers, cloudsCanvas, skyCanvas } from './background';
 import { Effects } from './effects';
 import SPRITES from '../../public/chars2/manifest.json';
 
@@ -256,6 +256,13 @@ export class BattleScene extends Phaser.Scene {
       const sc = Math.max(w / src.width, h / src.height);
       const img = this.add.image(0, 0, `bg_${info.backdrop}`).setOrigin(0).setDepth(-100).setScale(sc);
       this.bgImages.push({ img, factor: f, y: CAM_TOP * fy, kind: 'layer' });
+      if (info.id === 'herb_forest') {
+        addLayer(buildMushroomLayer(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed, 0.3), `bg_mush_${seed}`, -88);
+        if (!this.textures.exists('bg_rays')) this.textures.addCanvas('bg_rays', sunRayCanvas(VIEW_W, VIEW_H));
+        const rays = this.add.image(0, 0, 'bg_rays').setOrigin(0).setDepth(-80).setBlendMode(Phaser.BlendModes.ADD);
+        this.bgImages.push({ img: rays, factor: 0, y: 0, kind: 'sky' });
+        this.tweens.add({ targets: rays, alpha: { from: 0.65, to: 1 }, duration: 3200, yoyo: true, repeat: -1 });
+      }
       if (info.id === 'ice_peaks') addLayer(buildPineLayer(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed), `bg_pine_${seed}`, -90);
     } else {
       const skyKey = `bg_sky_${theme}`;
@@ -929,6 +936,11 @@ export class BattleScene extends Phaser.Scene {
       } else if (walking) {
         by -= Math.abs(Math.sin(v.walkDist * 0.35)) * 2.5;
         rot = Math.sin(v.walkDist * 0.35) * 0.07;
+      } else if (g.currentPlayer === p && g.phase === 'aiming') {
+        // 조준: 각도에 따라 상체가 살짝 들림
+        rot = -p.facing * ((p.angle - 30) / 90) * 0.18;
+        const br = Math.sin(t * 2.6 + i * 1.7);
+        sy *= 1 + br * 0.012;
       } else {
         // 숨쉬기
         const br = Math.sin(t * 2.6 + i * 1.7);

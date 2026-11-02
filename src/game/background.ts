@@ -333,3 +333,177 @@ export function buildPineLayer(viewW: number, viewH: number, worldW: number, wor
   }
   return { canvas: c, factor: f, y: camTop * fy };
 }
+
+/** 약초의 숲 중경: 입체감 있는 거대 버섯·덩굴·꽃덤불 (투명 배경, 패럴랙스용) */
+export function buildMushroomLayer(viewW: number, viewH: number, worldW: number, worldH: number, camTop: number, seed: number, f = 0.3): BgLayer {
+  const rng = new Rng(seed + 77);
+  const w = Math.ceil(viewW + (worldW - viewW) * f) + 4;
+  const fy = f * 0.6;
+  const h = Math.ceil(viewH + (worldH - viewH - camTop) * fy) + 4;
+  const c = makeCanvas(w, h);
+  const ctx = c.getContext('2d')!;
+  const ground = h * 0.56;
+  // 덤불 띠 (바닥 연결): 아래로 갈수록 짙은 숲 그늘
+  const hs = fbm(rng, w, 4).map((v) => ground - v * 70);
+  const shade = ctx.createLinearGradient(0, ground - 70, 0, h);
+  shade.addColorStop(0, '#2c6a34');
+  shade.addColorStop(0.35, '#1a4a2a');
+  shade.addColorStop(1, '#0e2a1c');
+  ctx.fillStyle = shade;
+  for (let x = 0; x < w; x++) ctx.fillRect(x, Math.round(hs[x]) + 6, 1, h);
+  // 잎 뭉치 3겹 (뒤 어둡게 → 앞 밝게)
+  const rows: [number, number, string[]][] = [
+    [-14, 14, ['#6aa84a', '#2f6a34', '#1a4a2a']],
+    [0, 12, ['#8fd04a', '#3f8a3a', '#245a2e']],
+    [12, 10, ['#b4ec5a', '#5aa83a', '#2f6a34']],
+  ];
+  for (const [dy, step, cols] of rows) {
+    for (let i = 0; i < w / step; i++) {
+      const x = rng.range(0, w);
+      const y = hs[Math.floor(x)] + dy + rng.range(-4, 6);
+      const r = rng.range(9, 20);
+      const gr = ctx.createRadialGradient(x - r * 0.35, y - r * 0.45, 1, x, y, r);
+      gr.addColorStop(0, cols[0]);
+      gr.addColorStop(0.55, cols[1]);
+      gr.addColorStop(1, cols[2]);
+      ctx.fillStyle = gr;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // 거대 버섯
+  const caps = [
+    ['#ffd0e6', '#ff7ab0', '#b03a78'],
+    ['#f0d4ff', '#c07aff', '#6a2ab0'],
+    ['#ffe0d0', '#ff8a6a', '#b0402a'],
+  ];
+  const count = Math.max(4, Math.round(w / 260));
+  for (let i = 0; i < count; i++) {
+    const x = (i + rng.range(0.2, 0.8)) * (w / count);
+    const gy = hs[Math.floor(Math.min(w - 1, x))] + 14;
+    const size = rng.range(40, 80);
+    const [cl, cm, cd] = caps[rng.int(0, caps.length - 1)];
+    const stemH = size * rng.range(1.3, 1.9),
+      stemW = size * 0.32;
+    // 줄기 (원통 그라디언트)
+    const sg = ctx.createLinearGradient(x - stemW / 2, 0, x + stemW / 2, 0);
+    sg.addColorStop(0, '#fff8ec');
+    sg.addColorStop(0.5, '#f0e2c8');
+    sg.addColorStop(1, '#b8a080');
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.moveTo(x - stemW * 0.42, gy - stemH);
+    ctx.quadraticCurveTo(x - stemW * 0.62, gy - stemH * 0.4, x - stemW * 0.62, gy);
+    ctx.lineTo(x + stemW * 0.62, gy);
+    ctx.quadraticCurveTo(x + stemW * 0.62, gy - stemH * 0.4, x + stemW * 0.42, gy - stemH);
+    ctx.fill();
+    const cy = gy - stemH;
+    const rx = size * 0.95,
+      ry = size * 0.58;
+    // 갓 아래 주름(어두움)
+    ctx.fillStyle = '#e8c8b8';
+    ctx.beginPath();
+    ctx.ellipse(x, cy, rx * 0.92, ry * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(150,100,90,0.5)';
+    ctx.lineWidth = 1;
+    for (let k = -8; k <= 8; k++) {
+      ctx.beginPath();
+      ctx.moveTo(x, cy + 2);
+      ctx.lineTo(x + (k / 8) * rx * 0.85, cy + ry * 0.12);
+      ctx.stroke();
+    }
+    // 갓 (반구, 왼쪽 위 광원)
+    const cg = ctx.createRadialGradient(x - rx * 0.35, cy - ry * 0.7, 2, x, cy - ry * 0.2, rx * 1.1);
+    cg.addColorStop(0, cl);
+    cg.addColorStop(0.45, cm);
+    cg.addColorStop(1, cd);
+    ctx.fillStyle = cg;
+    ctx.beginPath();
+    ctx.ellipse(x, cy, rx, ry, 0, Math.PI, 0);
+    ctx.quadraticCurveTo(x + rx * 0.5, cy + ry * 0.12, x, cy + ry * 0.1);
+    ctx.quadraticCurveTo(x - rx * 0.5, cy + ry * 0.12, x - rx, cy);
+    ctx.fill();
+    // 흰 점박이 (위쪽은 크게, 가장자리 작게)
+    for (let k = 0; k < 9; k++) {
+      const a = rng.range(Math.PI * 1.08, Math.PI * 1.92);
+      const rr = rng.range(0.3, 0.85);
+      const sx = x + Math.cos(a) * rx * rr,
+        sy = cy + Math.sin(a) * ry * rr;
+      const sr = size * rng.range(0.05, 0.1) * (1.1 - rr * 0.5);
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath();
+      ctx.ellipse(sx, sy, sr, sr * 0.75, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 하이라이트
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(x - rx * 0.35, cy - ry * 0.62, rx * 0.25, ry * 0.12, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // 꽃 핀 덩굴 (위로 감겨 올라감)
+  for (let i = 0; i < w / 220; i++) {
+    let x = rng.range(0, w);
+    const base = hs[Math.floor(x)] + 8;
+    const len = rng.range(120, 230);
+    ctx.strokeStyle = '#3f7a2a';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x, base);
+    for (let y = 0; y < len; y += 4) {
+      x += Math.sin(y / 18 + i) * 1.4;
+      ctx.lineTo(x, base - y);
+      if (y % 24 === 0 && y > 10) {
+        const dir = (y / 24) % 2 ? 1 : -1;
+        ctx.fillStyle = '#7acc3a';
+        ctx.beginPath();
+        ctx.ellipse(x + dir * 7, base - y, 7, 3.2, dir * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#ffd0a8';
+    ctx.beginPath();
+    ctx.arc(x, base - len, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffeec8';
+    ctx.beginPath();
+    ctx.arc(x, base - len, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // 바닥 꽃
+  const fl = ['#ff8ac0', '#ffd0e4', '#ffe066', '#c7a6ff', '#ffffff'];
+  for (let i = 0; i < w / 10; i++) {
+    const x = rng.range(0, w);
+    const y = hs[Math.floor(x)] + rng.range(-4, 14);
+    ctx.fillStyle = fl[rng.int(0, fl.length - 1)];
+    ctx.fillRect(Math.round(x), Math.round(y), 3, 3);
+    ctx.fillStyle = '#ffe9a0';
+    ctx.fillRect(Math.round(x) + 1, Math.round(y) + 1, 1, 1);
+  }
+  return { canvas: c, factor: f, y: camTop * fy };
+}
+
+/** 나뭇잎 사이로 비치는 햇살 (화면 고정, ADD 합성) */
+export function sunRayCanvas(w: number, h: number): HTMLCanvasElement {
+  const c = makeCanvas(w, h);
+  const ctx = c.getContext('2d')!;
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 6; i++) {
+    const x = w * (0.15 + i * 0.15);
+    const g = ctx.createLinearGradient(x, 0, x - h * 0.35, h);
+    g.addColorStop(0, 'rgba(255,245,200,0.16)');
+    g.addColorStop(1, 'rgba(255,245,200,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    const bw = 18 + (i % 3) * 14;
+    ctx.moveTo(x - bw, 0);
+    ctx.lineTo(x + bw, 0);
+    ctx.lineTo(x + bw - h * 0.35 + 40, h);
+    ctx.lineTo(x - bw - h * 0.35 - 20, h);
+    ctx.fill();
+  }
+  return c;
+}

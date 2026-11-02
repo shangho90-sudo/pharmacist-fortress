@@ -22,7 +22,7 @@ export interface MapInfo {
 }
 
 export const MAP_INFO: Record<MapId, MapInfo> = {
-  herb_forest: { id: 'herb_forest', name: '약초의 숲', icon: '🌿', description: '거대한 약초와 버섯이 자라는 초록빛 전장', gravityScale: 1, windScale: 1, liquidY: null, liquid: null, backdrop: null, tags: ['기본'] },
+  herb_forest: { id: 'herb_forest', name: '약초의 숲', icon: '🌿', description: '고대 유적과 폭포, 거대한 버섯이 자라는 판타지 숲', gravityScale: 1, windScale: 1, liquidY: null, liquid: null, backdrop: 'herb_forest', tags: ['기본'] },
   ice_peaks: { id: 'ice_peaks', name: '빙결 설산', icon: '❄️', description: '얼음 성채 아래 계단식 설벽과 얼어붙은 호수', gravityScale: 1, windScale: 1.2, liquidY: 1010, liquid: 'ice_water', backdrop: 'ice_peaks', tags: ['강풍', '나무 다리', '호수 추락'] },
   moon_base: { id: 'moon_base', name: '달 기지', icon: '🌙', description: '지구가 떠오른 달 표면과 제약 우주정거장', gravityScale: 0.62, windScale: 0, liquidY: null, liquid: null, backdrop: null, tags: ['저중력', '무풍', '동굴'] },
   pirate_cove: { id: 'pirate_cove', name: '해적의 만', icon: '🏴‍☠️', description: '난파선이 잠든 만, 양쪽 해안의 나무 부두', gravityScale: 1, windScale: 1, liquidY: 880, liquid: 'water', backdrop: 'pirate_cove', tags: ['바다 추락', '부두', '암초'] },

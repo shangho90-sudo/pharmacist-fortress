@@ -40,15 +40,34 @@ interface Theme {
   gem?: string;
   /** 노이즈 스케일 (클수록 큰 무늬) */
   grain: number;
+  /** 지표 위 풀잎·꽃, 오버행 아래 뿌리·이끼 장식 (공기 픽셀에 그림, 지형 파괴 시 자동 갱신) */
+  deco?: { blade: [string, string, string]; flowers: string[]; root: string; moss: string };
+  /** 박힌 바위 셀 크기 (기본 20) */
+  rockCell?: number;
+  /** 잔디층 아래로 흘러내리는 이끼 */
+  drips?: boolean;
 }
 
 const THEMES: Record<MapId, Theme> = {
-  herb_forest: { ramp: ['#3e2618', '#5a3822', '#76502f', '#946840', '#b08452'], top: ['#b4ef6a', '#6cc24a', '#3f8f3a'], topDepth: 10, crack: '#2a160e', rock: ['#5f5b70', '#9a96a8', '#d0cede'], rockRate: 0.12, roots: true, gem: '#6fffd2', grain: 1 },
+  herb_forest: {
+    ramp: ['#24140c', '#382012', '#4e301b', '#674427', '#825a34'],
+    top: ['#c8f75a', '#86d434', '#4c9a26'],
+    topDepth: 13,
+    crack: '#170c06',
+    rock: ['#2a2434', '#6e6680', '#b4accb'],
+    rockRate: 0.26,
+    rockCell: 46,
+    roots: true,
+    drips: true,
+    gem: '#6fffd2',
+    grain: 1,
+    deco: { blade: ['#3e8a22', '#7acc32', '#d4ff70'], flowers: ['#ff8ac0', '#ffd0e4', '#ffe066', '#c7a6ff', '#ffffff'], root: '#4a2c16', moss: '#5aa82a' },
+  },
   ice_peaks: { ramp: ['#232c48', '#33405f', '#4a5a80', '#6a7ea6', '#91a6c8'], top: ['#ffffff', '#e2f2ff', '#b8d8f2'], topDepth: 13, crack: '#161c30', rock: ['#3a4868', '#8ea0c4', '#d8e6ff'], rockRate: 0.1, gem: '#bff4ff', grain: 1.2 },
   moon_base: { ramp: ['#1c1d38', '#2b2d52', '#40436e', '#5c618e', '#8188b2'], top: ['#e8ebfa', '#bcc2e0', '#8f96be'], topDepth: 12, crack: '#121226', rock: ['#2a2a48', '#6a6e98', '#b4b8da'], rockRate: 0.1, craters: true, gem: '#7ad8ff', grain: 1.4 },
-  pirate_cove: { ramp: ['#20262e', '#303842', '#444e5a', '#5c6874', '#7e8c98'], top: ['#8fd45a', '#5aa83e', '#3a7a34'], topDepth: 8, crack: '#14181e', rock: ['#2e343e', '#7a8490', '#b8c0cc'], rockRate: 0.14, gem: '#e8d08a', grain: 1.1 },
+  pirate_cove: { ramp: ['#20262e', '#303842', '#444e5a', '#5c6874', '#7e8c98'], top: ['#8fd45a', '#5aa83e', '#3a7a34'], topDepth: 8, crack: '#14181e', rock: ['#2e343e', '#7a8490', '#b8c0cc'], rockRate: 0.14, gem: '#e8d08a', grain: 1.1, deco: { blade: ['#3a7a34', '#6cbf44', '#b8f07a'], flowers: ['#ffe066', '#ffffff'], root: '#3a2a20', moss: '#4a8a3a' } },
   volcano_lab: { ramp: ['#180e12', '#26181c', '#382428', '#4e3236', '#6a4646'], top: ['#9a8a86', '#6e5e5c', '#4a3a3c'], topDepth: 8, crack: '#0c0608', rock: ['#1a1214', '#5a4a4e', '#8a7476'], rockRate: 0.1, veins: true, grain: 1.2 },
-  sky_pharmacy: { ramp: ['#6a4a2e', '#8a6440', '#a87e52', '#c49a68', '#dcb888'], top: ['#c4ff8a', '#7ee05a', '#4ab048'], topDepth: 10, crack: '#4a3020', rock: ['#9a8060', '#e0d0b8', '#fff4e0'], rockRate: 0.08, grain: 1 },
+  sky_pharmacy: { ramp: ['#6a4a2e', '#8a6440', '#a87e52', '#c49a68', '#dcb888'], top: ['#c4ff8a', '#7ee05a', '#4ab048'], topDepth: 10, crack: '#4a3020', rock: ['#9a8060', '#e0d0b8', '#fff4e0'], rockRate: 0.08, grain: 1, drips: true, deco: { blade: ['#3e9a3a', '#7ee05a', '#d8ff9a'], flowers: ['#ffffff', '#ffb3c8', '#a8e4ff'], root: '#6a4a2e', moss: '#5ab048' } },
 };
 
 /** 부드러운 2D 값 노이즈 (0..1) */
@@ -90,12 +109,20 @@ export class TerrainView {
   private cols: number;
   private walls: { tex: Phaser.Textures.CanvasTexture; img: Phaser.GameObjects.Image }[] = [];
   readonly terrain: Terrain;
+  private theme!: Theme;
+  private material!: Uint8Array;
+  private seed = 0;
+  private deco: { blade: (readonly number[])[]; flowers: (readonly number[])[]; root: readonly number[]; moss: readonly number[] } | null = null;
 
   constructor(scene: Phaser.Scene, terrain: Terrain, material: Uint8Array, mapId: MapId, seed: number, depth = 0) {
     this.terrain = terrain;
     this.base = new Uint32Array(terrain.w * terrain.h);
     this.scorch = new Uint8Array(terrain.w * terrain.h);
-    this.buildBase(material, THEMES[mapId] ?? THEMES.herb_forest, seed);
+    this.theme = THEMES[mapId] ?? THEMES.herb_forest;
+    this.material = material;
+    this.seed = seed;
+    this.buildBase(material, this.theme, seed);
+    if (this.theme.deco) this.deco = { blade: this.theme.deco.blade.map(hex), flowers: this.theme.deco.flowers.map(hex), root: hex(this.theme.deco.root), moss: hex(this.theme.deco.moss) };
     this.cols = Math.ceil(terrain.w / CHUNK);
     const rows = Math.ceil(terrain.h / CHUNK);
     for (let cy = 0; cy < rows; cy++) {
@@ -200,11 +227,19 @@ export class TerrainView {
           c = depth < 2 ? [...ice[0]] : n > 0.6 ? [...ice[1]] : n > 0.4 ? [...ice[2]] : [...ice[3]];
           if (hash2(x, y, seed) < 0.03) c = [255, 255, 255];
         } else {
-          const topDepth = th.topDepth + Math.floor(vnoise(x / 6, 0, seed + 3) * 5);
+          let topDepth = th.topDepth + Math.floor(vnoise(x / 6, 0, seed + 3) * 5);
+          // 이끼가 흙 위로 흘러내린 자국
+          if (th.drips) {
+            const dh = hash2(x >> 1, 9, seed);
+            if (dh < 0.22) topDepth += Math.floor(3 + ((0.22 - dh) / 0.22) * 12 * vnoise(x / 3, 1, seed + 4));
+          }
           // 지표층 (잔디/눈/표토) — 아래쪽 경계는 물결 모양
           if (depth < topDepth) {
-            c = depth < 2 ? [...T[0]] : depth < topDepth * 0.55 ? [...T[1]] : [...T[2]];
-            if (depth >= 2 && hash2(x, y, seed + 1) < 0.08) c = [...T[0]];
+            const base = th.topDepth;
+            c = depth < 1 ? mix(T[0], [255, 255, 220], 0.35) : depth < 3 ? [...T[0]] : depth < base * 0.55 ? [...T[1]] : [...T[2]];
+            if (depth >= 3 && depth < base * 0.55 && vnoise(x / 2.5, y / 2.5, seed + 1) > 0.72) c = [...T[0]];
+            if (depth >= base) c = mix(T[2], [20, 40, 10], Math.min(0.5, (depth - base) / 20)); // 흘러내린 이끼
+            if (depth === topDepth - 1) c = mix(c, [10, 20, 6], 0.45);
           } else {
             // 암석: 가로로 늘어난 노이즈 + 잔무늬 → 5단계 포스터라이즈
             // 가로로 길게 늘어난 암석층 + 잔무늬 → 5단계 포스터라이즈
@@ -226,21 +261,52 @@ export class TerrainView {
             const r2 = Math.abs(fbm2(x / 46, (y - 1) / 46, seed + 77, 3) - 0.5);
             if (on && r < 0.006 && depth > topDepth + 6) c = [...crack];
             else if (on && r2 < 0.006 && depth > topDepth + 6) c = mix(c, ramp[Math.min(4, band + 2)], 0.7);
+            // 흙덩이 질감 (숲 테마): 작은 둥근 덩어리마다 위 밝게 / 아래 어둡게
+            if (th.deco && depth > topDepth) {
+              const cc = 11;
+              const qx = Math.floor((x + (Math.floor(y / cc) % 2) * 5) / cc),
+                qy = Math.floor(y / cc);
+              const ox = qx * cc - (Math.floor(y / cc) % 2) * 5 + cc / 2 + (hash2(qx, qy, seed + 61) - 0.5) * 4;
+              const oy = qy * cc + cc / 2 + (hash2(qx, qy, seed + 62) - 0.5) * 4;
+              const r0 = 4 + hash2(qx, qy, seed + 63) * 3;
+              const ddx = x + 0.5 - ox,
+                ddy = y + 0.5 - oy;
+              const dd = Math.sqrt(ddx * ddx + ddy * ddy * 1.4) / r0;
+              if (dd < 1) {
+                const lit = (-ddx - ddy) / r0;
+                if (lit > 0.5) c = mix(c, ramp[Math.min(4, band + 2)], 0.6);
+                else if (lit > 0) c = mix(c, ramp[Math.min(4, band + 1)], 0.5);
+                if (dd > 0.82 && lit < 0) c = mix(c, [10, 5, 2], 0.45);
+              }
+            }
             // 박힌 바위 (지터 셀 중심의 둥근 돌, 좌상단 하이라이트 / 우하단 그림자)
-            const cs = 20;
+            const cs = th.rockCell ?? 20;
             const gx = Math.floor(x / cs),
               gy = Math.floor(y / cs);
             const hv = hash2(gx, gy, seed + 11);
-            if (hv < th.rockRate && depth > topDepth + 6) {
-              const ccx = gx * cs + 4 + hash2(gx, gy, seed + 12) * 12;
-              const ccy = gy * cs + 4 + hash2(gx, gy, seed + 13) * 12;
-              const rr = 3 + hv / th.rockRate * 6;
+            if (hv < th.rockRate && depth > topDepth + 4) {
+              const big = cs > 20;
+              const ccx = gx * cs + cs * 0.3 + hash2(gx, gy, seed + 12) * cs * 0.4;
+              const ccy = gy * cs + cs * 0.3 + hash2(gx, gy, seed + 13) * cs * 0.4;
+              const rr = (big ? 7 : 3) + (hv / th.rockRate) * (big ? 14 : 6);
               const dx = x + 0.5 - ccx,
                 dy = y + 0.5 - ccy;
-              const d = Math.sqrt(dx * dx + dy * dy * 1.5) / rr;
+              // 울퉁불퉁한 외곽
+              const wob = 1 + (vnoise(x / 3, y / 3, seed + 14) - 0.5) * 0.25;
+              const d = (Math.sqrt(dx * dx + dy * dy * 1.6) / rr) * wob;
               if (d < 1) {
-                if (d > 0.82) c = [...rk[0]];
-                else c = dx + dy < -rr * 0.5 ? [...rk[2]] : dx + dy > rr * 0.4 ? mix(rk[0], rk[1], 0.5) : [...rk[1]];
+                const lit = (-dx - dy * 1.3) / rr; // 왼쪽 위 광원
+                if (d > 0.86) c = [...rk[0]];
+                else if (lit > 0.55) c = mix(rk[2], [255, 255, 255], 0.15);
+                else if (lit > 0.05) c = [...rk[1]];
+                else if (lit > -0.5) c = mix(rk[0], rk[1], 0.55);
+                else c = mix(rk[0], rk[1], 0.25);
+                // 표면 근처 바위 윗부분 이끼
+                if (th.deco && depth < 70 && dy < -rr * 0.35 && d < 0.86 && vnoise(x / 2, y / 2, seed + 15) > 0.45) c = mix(c, [110, 190, 50], 0.7);
+                // 균열 하나
+                if (big && Math.abs(dx - dy * 0.5 - rr * 0.15) < 0.6 && d < 0.7) c = [...rk[0]];
+              } else if (d < 1.18 && dy > 0) {
+                c = mix(c, [0, 0, 0], 0.35); // 바위 아래 그림자
               }
             }
             if (th.veins) {
@@ -306,7 +372,7 @@ export class TerrainView {
 
   /** 변경 영역(rect)이 걸친 청크만 다시 그린다 */
   redraw(rect: Rect) {
-    const pad = 5;
+    const pad = 20; // 장식(풀잎·뿌리) 높이만큼 여유
     const rx0 = Math.max(0, rect.x - pad),
       ry0 = Math.max(0, rect.y - pad);
     const rx1 = Math.min(this.terrain.w, rect.x + rect.w + pad),
@@ -322,6 +388,72 @@ export class TerrainView {
     }
   }
 
+  /** 지표 아래 거리(공기 픽셀 → 바로 아래 땅까지). 없으면 -1 */
+  private distDown(x: number, y: number, max: number): number {
+    const t = this.terrain;
+    if (x < 0 || x >= t.w) return -1;
+    for (let k = 1; k <= max; k++) {
+      const yy = y + k;
+      if (yy >= t.h) return -1;
+      if (t.mask[yy * t.w + x]) return this.material[yy * t.w + x] === 0 ? k : -1;
+    }
+    return -1;
+  }
+  private distUp(x: number, y: number, max: number): number {
+    const t = this.terrain;
+    for (let k = 1; k <= max; k++) {
+      const yy = y - k;
+      if (yy < 0) return -1;
+      if (t.mask[yy * t.w + x]) return this.material[yy * t.w + x] === 0 ? k : -1;
+    }
+    return -1;
+  }
+
+  /** 공기 픽셀에 그리는 장식: 풀잎, 꽃, 매달린 뿌리·이끼 (지형 마스크에서 매번 계산 → 파괴 시 자동 갱신) */
+  private decoAt(x: number, y: number): number {
+    const d = this.deco!;
+    const sd = this.seed;
+    const k = this.distDown(x, y, 9);
+    if (k > 0) {
+      const sy = y + k; // 지표 y
+      // 꽃: 일정 간격 열에 줄기 + 꽃잎(가로 3px)
+      for (let dx = -1; dx <= 1; dx++) {
+        const fx = x + dx;
+        if (hash2(fx, 31, sd) < 0.05 && hash2(fx >> 2, sy >> 3, sd + 3) < 0.7) {
+          const fk = dx === 0 ? k : this.distDown(fx, y, 9);
+          if (fk < 0) continue;
+          const fh = 6 + Math.floor(hash2(fx, 32, sd) * 3);
+          const col = d.flowers[Math.floor(hash2(fx, 33, sd) * d.flowers.length)];
+          if (fk === fh && dx !== 0) return rgba(col[0], col[1], col[2]);
+          if (dx === 0 && (fk === fh || fk === fh + 1)) return fk === fh ? rgba(255, 230, 120) : rgba(col[0], col[1], col[2]);
+          if (dx === 0 && fk < fh) return rgba(d.blade[0][0], d.blade[0][1], d.blade[0][2]);
+        }
+      }
+      // 풀잎: 열마다 높이가 다른 날
+      const hv = hash2(x, sy, sd + 7);
+      if (hv < 0.82) {
+        const bh = 1 + Math.floor(hash2(x, 34, sd) * 3 + vnoise(x / 9, 0, sd + 8) * 4);
+        if (k <= bh) {
+          const t = k / bh;
+          const c = t > 0.66 ? d.blade[2] : t > 0.33 ? d.blade[1] : d.blade[0];
+          return rgba(c[0], c[1], c[2]);
+        }
+      }
+      return 0;
+    }
+    // 오버행 아래로 늘어진 뿌리/이끼
+    const u = this.distUp(x, y, 18);
+    if (u > 0) {
+      if (u <= 2 && hash2(x, y - u, sd + 9) < 0.45) return rgba(d.moss[0], d.moss[1], d.moss[2]);
+      const rv = hash2(x, 41, sd);
+      if (rv < 0.07) {
+        const len = 6 + Math.floor(hash2(x, 42, sd) * 12);
+        if (u <= len) return u === len ? rgba(d.moss[0], d.moss[1], d.moss[2]) : rgba(d.root[0], d.root[1], d.root[2]);
+      }
+    }
+    return 0;
+  }
+
   private paint(ch: (typeof this.chunks)[number], x0: number, y0: number, w: number, h: number) {
     const ctx = ch.tex.getContext();
     const img = ctx.createImageData(w, h);
@@ -335,7 +467,7 @@ export class TerrainView {
         const wx = x0 + x;
         const i = wy * W + wx;
         if (!m[i]) {
-          out[y * w + x] = 0;
+          out[y * w + x] = this.deco ? this.decoAt(wx, wy) : 0;
           continue;
         }
         let c = this.base[i];
@@ -354,7 +486,8 @@ export class TerrainView {
         };
         let k = 1;
         if (air(0, -1) || air(-1, 0) || air(1, 0) || air(0, 1)) {
-          k = air(0, -1) && !sc ? 0.62 : 0.5; // 외곽선
+          const onlyTop = air(0, -1) && !air(-1, 0) && !air(1, 0) && !air(0, 1);
+          k = this.deco && onlyTop && !sc ? 1.12 : air(0, -1) && !sc ? 0.62 : 0.5; // 외곽선 (잔디 윗면은 햇빛 하이라이트)
         } else if (air(0, -2) || air(-1, -2) || air(1, -2)) k = 1.28;
         else if (air(0, -3)) k = 1.16;
         else if (air(0, -4)) k = 1.07;

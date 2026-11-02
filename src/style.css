@@ -1894,3 +1894,65 @@ button {
   background: #23306a;
   box-shadow: 0 0 calc(var(--u) * 0.8) rgba(255, 210, 63, 0.5);
 }
+
+/* ═════════ 네온 블루 HUD 폴리시 ═════════ */
+#hud .np {
+  border-color: #3fa6ff;
+  box-shadow: inset 0 0 0 calc(var(--u) * 0.1) rgba(140, 210, 255, 0.35), inset 0 calc(var(--u) * 0.4) calc(var(--u) * 0.6) rgba(120, 190, 255, 0.12), 0 0 calc(var(--u) * 0.9) rgba(60, 170, 255, 0.55), 0 calc(var(--u) * 0.25) calc(var(--u) * 0.5) rgba(0, 0, 0, 0.5);
+  background: linear-gradient(180deg, #11295c 0%, #0a1940 55%, #06102c 100%);
+}
+#hud .h-turn {
+  clip-path: polygon(0 0, 100% 0, 100% 55%, 93% 100%, 7% 100%, 0 55%);
+  border-radius: 0;
+  padding-bottom: calc(var(--u) * 0.9);
+}
+#hud .h-turn .who::before,
+#hud .h-turn .who::after {
+  content: '✦';
+  color: #6cc4ff;
+  font-size: 0.7em;
+  margin: 0 0.5em;
+  text-shadow: 0 0 0.5em #3fa6ff;
+}
+#hud .h-tl .wind,
+#hud .h-tl .mapn {
+  clip-path: polygon(0 0, 94% 0, 100% 50%, 94% 100%, 0 100%);
+}
+#hud .h-bottom {
+  border-top-color: #3fa6ff;
+  box-shadow: 0 calc(var(--u) * -0.1) 0 rgba(140, 210, 255, 0.5), 0 calc(var(--u) * -0.4) calc(var(--u) * 1.4) rgba(60, 170, 255, 0.45);
+}
+#hud .sbtn::before {
+  margin-right: 0.4em;
+  font-size: 1.05em;
+}
+#hud .sbtn[data-a='skip']::before {
+  content: '⏩';
+}
+#hud .sbtn[data-a='settings']::before {
+  content: '⚙';
+}
+#hud .sbtn[data-a='quit']::before {
+  content: '🚪';
+}
+#hud .firebtn {
+  border-color: #ff9a9a;
+  box-shadow: inset 0 calc(var(--u) * 0.3) 0 rgba(255, 255, 255, 0.35), inset 0 calc(var(--u) * -0.35) 0 rgba(0, 0, 0, 0.3), 0 0 calc(var(--u) * 1.6) rgba(255, 70, 70, 0.75);
+}
+#hud .firebtn .burst {
+  font-size: calc(var(--u) * 4);
+  color: #fff;
+  text-shadow: 0 0 calc(var(--u) * 0.8) #ffd23f, 0 0 calc(var(--u) * 1.6) #ff7a1a;
+}
+#hud .slot1.on {
+  border-color: #ffd23f;
+  box-shadow: 0 0 calc(var(--u) * 0.8) rgba(255, 210, 63, 0.75), inset 0 0 calc(var(--u) * 0.8) rgba(255, 210, 63, 0.3);
+}
+#hud .tb {
+  border-color: #3fa6ff;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.2), 0 0 calc(var(--u) * 0.5) rgba(60, 170, 255, 0.55);
+}
+#hud .pcard.active {
+  border-color: #ffd23f;
+  box-shadow: 0 0 calc(var(--u) * 1) rgba(255, 210, 63, 0.6);
+}

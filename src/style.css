@@ -1956,3 +1956,47 @@ button {
   border-color: #ffd23f;
   box-shadow: 0 0 calc(var(--u) * 1) rgba(255, 210, 63, 0.6);
 }
+
+/* 무기 슬롯 4칸 */
+#hud .slots .slot1 {
+  min-width: 0;
+}
+#hud .slot1.mv {
+  flex: 0.78;
+}
+#hud .slot1.mv .ic {
+  filter: drop-shadow(0 0 0.4em #4ef0ff);
+}
+#hud .slot1 small {
+  font-size: calc(var(--u) * 0.95);
+}
+/* 4칸 무기 슬롯: 아이콘 + (이름 / 상태) 두 줄 */
+#hud .slot1 {
+  display: grid !important;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: 1fr 1fr;
+  column-gap: calc(var(--u) * 0.45) !important;
+  align-items: center;
+  padding: calc(var(--u) * 0.2) calc(var(--u) * 0.5) !important;
+  text-align: left;
+}
+#hud .slot1 .ic {
+  grid-row: 1 / span 2;
+  font-size: calc(var(--u) * 1.7) !important;
+}
+#hud .slot1 .nm {
+  align-self: end;
+  font-size: calc(var(--u) * 0.98) !important;
+  min-width: 0;
+}
+#hud .slot1 small {
+  align-self: start;
+  margin-left: 0 !important;
+  font-size: calc(var(--u) * 0.85) !important;
+}
+#hud .slot1.mv {
+  flex: 0.8;
+}
+#hud .timep {
+  width: calc(var(--u) * 6.4);
+}

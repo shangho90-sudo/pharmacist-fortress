@@ -411,6 +411,7 @@ export class UI {
                 <button class="slot1 on" data-w="basic"><kbd>1</kbd><span class="ic">💊</span><span class="nm b1n">기본탄</span><small>∞</small></button>
                 <button class="slot1" data-w="special"><kbd>2</kbd><span class="ic">💥</span><span class="nm sp2n">특수탄</span><small class="sp2g">READY</small></button>
                 <button class="slot1" data-w="ultimate"><kbd>3</kbd><span class="ic">✨</span><span class="nm spn">필살기</span><small class="spg">0%</small><i class="charge"></i></button>
+                <button class="slot1 mv" data-w="move"><kbd>4</kbd><span class="ic">🌀</span><span class="nm">이동탄</span><small class="mvg">READY</small></button>
               </div>
               <div class="np timep"><span>TIME</span><b class="tm">30</b></div>
             </div>
@@ -434,7 +435,7 @@ export class UI {
     void meter;
     el.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
-      const w = t.closest('[data-w]')?.getAttribute('data-w') as 'basic' | 'special' | 'ultimate' | undefined;
+      const w = t.closest('[data-w]')?.getAttribute('data-w') as 'basic' | 'special' | 'ultimate' | 'move' | undefined;
       if (w) this.scene.selectWeapon(w);
       const a = t.closest('[data-a]')?.getAttribute('data-a');
       if (a === 'skip') this.scene.skipTurn();
@@ -643,6 +644,11 @@ export class UI {
     (ws.querySelector('.spn') as HTMLElement).textContent = def.ultimate.name;
     (ws.querySelector('.spg') as HTMLElement).textContent = cp.gauge >= MAX_GAUGE ? 'READY' : `${cp.gauge}%`;
     ws.title = `필살기 · ${def.ultimate.name}: ${def.ultimate.desc}`;
+    const wm = el.querySelector('[data-w="move"]') as HTMLElement;
+    wm.classList.toggle('on', this.scene.selected === 'move');
+    wm.classList.toggle('locked', cp.moveShotCd > 0);
+    (wm.querySelector('.mvg') as HTMLElement).textContent = cp.moveShotCd > 0 ? `${cp.moveShotCd}턴` : 'READY';
+    wm.title = '이동탄: 탄이 떨어진 위치로 캐릭터가 이동합니다 (피해 없음, 사용 후 3턴 대기)';
     // TIME
     const tm = el.querySelector('.timep .tm') as HTMLElement;
     tm.textContent = timing ? String(sec) : '—';
@@ -773,7 +779,7 @@ export class UI {
           <tr><td>← → / A D</td><td>이동 (턴마다 이동 거리 제한) · 방향 전환</td></tr>
           <tr><td>↑ ↓ / W S</td><td>발사 각도 조절 (0°~90°)</td></tr>
           <tr><td>스페이스</td><td>누르고 있으면 파워 충전, 떼면 발사</td></tr>
-          <tr><td>1 / 2 / 3</td><td>기본탄 / 특수탄(사용 후 3턴 대기) / 필살기(게이지 100)</td></tr>
+          <tr><td>1 / 2 / 3 / 4</td><td>기본탄 / 특수탄(3턴 대기) / 필살기(게이지 100) / 이동탄(착탄 지점으로 이동, 3턴 대기)</td></tr>
           <tr><td>드래그</td><td>맵 둘러보기</td></tr>
           <tr><td>Esc</td><td>일시정지 · 설정</td></tr>
           <tr><td>모바일</td><td>왼쪽 ◀▶ 이동, 오른쪽 ▲▼ 각도, 발사 버튼을 누르고 떼기</td></tr>

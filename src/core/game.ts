@@ -23,6 +23,9 @@ import { CHAR_TYPES, type CharTypeId } from './characters';
 
 /** 특수탄 재사용 대기 (내 턴 수) */
 export const SPECIAL_COOLDOWN = 3;
+/** 이동탄 재사용 대기 (내 턴 수) */
+export const MOVE_SHOT_COOLDOWN = 3;
+export const MOVE_SHOT = 'move_shot';
 const CAM_SURFACE_TOP = -2000;
 import { generateMap, type MapId, type MapInfo } from './mapgen';
 import { bodyCircle, hasGround, launch, stepGravity, stepProjectile, stepWalk, type Circle, type Mover, type Projectile } from './physics';
@@ -57,6 +60,8 @@ export interface Player extends Mover {
   deathCause: 'hp' | 'fall' | 'liquid' | null;
   /** 특수탄 재사용까지 남은 내 턴 수 (0이면 사용 가능) */
   specialCd: number;
+  /** 이동탄 재사용까지 남은 내 턴 수 */
+  moveShotCd: number;
   /** 다음 공격 피해 배율 (섀도우 스텝) */
   buff: number;
   /** 이번 발사의 피해 배율 */
@@ -167,6 +172,7 @@ export class Game {
         lastPower: null,
         deathCause: null,
         specialCd: 0,
+        moveShotCd: 0,
         buff: 1,
         shotMult: 1,
       } satisfies Player;
@@ -191,7 +197,7 @@ export class Game {
 
   /** 발사 명령. 조작 가능 상태가 아니면 무시(턴 전환 중 입력 오류 방지).
    *  kind: basic=기본탄(무제한), special=특수탄(3턴 재사용 대기), ultimate=필살기(게이지 100) */
-  fire(kind: 'basic' | 'special' | 'ultimate', power: number): boolean {
+  fire(kind: 'basic' | 'special' | 'ultimate' | 'move', power: number): boolean {
     if (!this.canControl || this.shotFiredThisTurn) return false;
     const p = this.currentPlayer;
     if (!p.grounded) return false;
@@ -201,6 +207,10 @@ export class Game {
       if (p.specialCd > 0) return false;
       weapon = def.special.weapon;
       p.specialCd = SPECIAL_COOLDOWN;
+    } else if (kind === 'move') {
+      if (p.moveShotCd > 0) return false;
+      weapon = MOVE_SHOT;
+      p.moveShotCd = MOVE_SHOT_COOLDOWN;
     } else if (kind === 'ultimate') {
       if (p.gauge < MAX_GAUGE) return false;
       weapon = def.ultimate.weapon;
@@ -571,6 +581,7 @@ export class Game {
     if (!first) {
       p.gauge = Math.min(MAX_GAUGE, p.gauge + 10);
       if (p.specialCd > 0) p.specialCd--;
+      if (p.moveShotCd > 0) p.moveShotCd--;
     }
     p.shotMult = 1;
     this.pending = [];

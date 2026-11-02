@@ -3,7 +3,7 @@ const { chromium, devices } = require('playwright');
 const ctx = await b.newContext({ ...devices['iPhone 13 landscape'] }); const p = await ctx.newPage();
 const errs=[]; p.on('pageerror', e => errs.push(e.message));
 await p.goto('http://127.0.0.1:5173/'); await p.waitForTimeout(2500);
-await p.tap('text=AI 대전'); await p.waitForTimeout(300); await p.tap('.mapb[data-v=volcano_lab]'); await p.tap('text=전투 시작!');
+await p.tap('[data-a=start]'); await p.waitForTimeout(300); await p.tap('[data-a=ai]'); await p.waitForTimeout(400); await p.tap('.nmap[data-map=herb_forest]'); await p.tap('.nbtn.gold');
 for (let i = 0; i < 60; i++) { const ok = await p.evaluate(() => { const s = window.__pf.scene; return s.isLocalTurn() && s.game2.canControl; }); if (ok) break; await p.waitForTimeout(500); }
 const st = () => p.evaluate(() => { const c = window.__pf.scene.game2.currentPlayer; return [c.x.toFixed(1), c.angle.toFixed(1)]; });
 const hold = async (sel, ms) => { const bb = await p.locator(sel).boundingBox(); const cx = bb.x + bb.width/2, cy = bb.y + bb.height/2;

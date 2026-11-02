@@ -178,3 +178,6 @@ add(
     onImpact: [{ kind: 'rain', weapon: 'dong_fall', offsets: range(-200, 200, 44), height: 480, vy: 540, delayStep: 4 }],
   }),
 );
+
+// ─────────── 공통: 이동탄 (착탄 지점으로 이동, 피해 없음) ───────────
+add(W({ id: 'move_shot', name: '이동탄', damage: 0, radius: 0, look: 'orb', color: '#4ef0ff', trail: 'light', onImpact: [{ kind: 'teleport' }] }));

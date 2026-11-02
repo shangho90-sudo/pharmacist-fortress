@@ -407,6 +407,23 @@ describe('캐릭터별 기본탄·특수탄·필살기', () => {
     expect(g.players[0].buff).toBe(1.5);
   });
 
+  it('이동탄: 피해 없이 착탄 지점으로 이동하고 3턴 대기', () => {
+    const g = ready('paeng');
+    const x0 = g.players[0].x;
+    const hp1 = g.players[1].hp;
+    g.setFacing(1);
+    g.setAngle(50);
+    expect(g.fire('move', 45)).toBe(true);
+    const evs = flyAll(g);
+    const tp = evs.find((e) => e.type === 'teleport');
+    expect(tp).toBeTruthy();
+    expect(Math.abs(g.players[0].x - tp.toX)).toBeLessThan(1);
+    expect(Math.abs(g.players[0].x - x0)).toBeGreaterThan(50);
+    expect(g.players[1].hp).toBe(hp1);
+    expect(g.players[0].moveShotCd).toBe(3);
+    expect(evs.some((e) => e.type === 'explode')).toBe(false);
+  });
+
   it('유도탄은 적 방향으로 휘어진다', () => {
     const g = ready('cheol');
     const enemy = g.players[1];

@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { planShot, type AiPlan } from '../core/ai';
 import { CHAR_TYPES, CHAR_LIST, type CharTypeId } from '../core/characters';
-import { DT, MAX_GAUGE, MUZZLE_HEIGHT, MUZZLE_LENGTH, TICK_RATE } from '../core/constants';
+import { DT, MAX_GAUGE, MUZZLE_HEIGHT, TICK_RATE } from '../core/constants';
 import { Game, type GameEvent, type Player, type PlayerSetup } from '../core/game';
 import { cosDeg, sinDeg } from '../core/physics';
 import { WEAPONS, type WeaponId } from '../core/weapons';
@@ -16,6 +16,8 @@ type FrameName = 'idle' | 'battle' | 'shoot';
 const SPR = SPRITES as Record<string, Record<FrameName, { w: number; h: number; ox: number }>>;
 /** 캐릭터 화면 높이(월드 px) */
 const CHAR_WORLD_H = 80;
+/** 탄 표시 배율 (판정 크기는 그대로, 보이는 크기만 3배) */
+const PROJ_VISUAL_SCALE = 3;
 const charScale = (id: string) => CHAR_WORLD_H / SPR[id].idle.h;
 import { asteroidCanvas, earthCanvas, nebulaCanvas, shipCanvas, stationCanvas } from './spaceBg';
 import { TerrainView } from './terrainView';
@@ -53,6 +55,11 @@ export interface BattleHooks {
 
 interface CharView {
   body: Phaser.GameObjects.Image;
+  /** 다리(스프라이트 하단을 좌/우로 잘라 따로 움직임) */
+  legL: Phaser.GameObjects.Image;
+  legR: Phaser.GameObjects.Image;
+  cropKey: string;
+  legAmp?: number;
   gun: Phaser.GameObjects.Image;
   label: Phaser.GameObjects.Text;
   hpText: Phaser.GameObjects.Text;
@@ -82,6 +89,7 @@ export class BattleScene extends Phaser.Scene {
   private acc = 0;
   private bgImages: { img: Phaser.GameObjects.Image | Phaser.GameObjects.TileSprite; factor: number; y: number; kind: 'layer' | 'sky' | 'cloud'; ox?: number; oy?: number; bob?: number; bobSpeed?: number; phase?: number; spin?: number }[] = [];
   private aimGfx!: Phaser.GameObjects.Graphics;
+  private aimText: Phaser.GameObjects.Text | null = null;
   private marker!: Phaser.GameObjects.Image;
   private ambient: Phaser.GameObjects.Particles.ParticleEmitter | null = null;
   private worldObjs: Phaser.GameObjects.GameObject[] = [];
@@ -102,7 +110,7 @@ export class BattleScene extends Phaser.Scene {
   charging = false;
   charge = 0;
   private chargeStart = 0;
-  selected: 'basic' | 'special' | 'ultimate' = 'basic';
+  selected: 'basic' | 'special' | 'ultimate' | 'move' = 'basic';
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private lastTickSecond = -1;
 
@@ -215,6 +223,8 @@ export class BattleScene extends Phaser.Scene {
     this.bgImages = [];
     for (const v of this.views) {
       v.body.destroy();
+      v.legL.destroy();
+      v.legR.destroy();
       v.gun.destroy();
       v.label.destroy();
       v.hpText.destroy();
@@ -483,7 +493,9 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private makeCharView(p: Player): CharView {
-    const body = this.add.image(p.x, p.y, `spr_${p.charType}_idle`).setOrigin(SPR[p.charType].idle.ox, 1).setDepth(10).setScale(charScale(p.charType));
+    const body = this.add.image(p.x, p.y, `spr_${p.charType}_idle`).setOrigin(SPR[p.charType].idle.ox, 1).setDepth(10.2).setScale(charScale(p.charType));
+    const legL = this.add.image(p.x, p.y, `spr_${p.charType}_idle`).setOrigin(SPR[p.charType].idle.ox, 1).setDepth(10.1).setScale(charScale(p.charType));
+    const legR = this.add.image(p.x, p.y, `spr_${p.charType}_idle`).setOrigin(SPR[p.charType].idle.ox, 1).setDepth(10).setScale(charScale(p.charType));
     const gun = this.add
       .image(p.x, p.y - MUZZLE_HEIGHT, `gun_${p.charType}`)
       .setOrigin(GUN_PIVOT_X / GUN_W, GUN_PIVOT_Y / GUN_H)
@@ -503,7 +515,7 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(41)
       .setResolution(6);
     const hpBar = this.add.graphics().setDepth(40);
-    return { body, gun, label, hpText, hpBar, shadow, shownHp: p.hp, lastX: p.x, walkDist: 0, hitTimer: 0, shootTimer: 0, blinkTimer: 0, knock: 0, fallen: false, hitFlash: 0 };
+    return { body, legL, legR, cropKey: '', gun, label, hpText, hpBar, shadow, shownHp: p.hp, lastX: p.x, walkDist: 0, hitTimer: 0, shootTimer: 0, blinkTimer: 0, knock: 0, fallen: false, hitFlash: 0 };
   }
 
   // ───────────────────────── 입력 ─────────────────────────
@@ -522,6 +534,7 @@ export class BattleScene extends Phaser.Scene {
       one: 'ONE',
       two: 'TWO',
       three: 'THREE',
+      four: 'FOUR',
     }) as Record<string, Phaser.Input.Keyboard.Key>;
     kb.addCapture(['SPACE', 'UP', 'DOWN', 'LEFT', 'RIGHT']);
     this.keys.space.on('down', () => this.startCharge());
@@ -529,6 +542,7 @@ export class BattleScene extends Phaser.Scene {
     this.keys.one.on('down', () => this.selectWeapon('basic'));
     this.keys.two.on('down', () => this.selectWeapon('special'));
     this.keys.three.on('down', () => this.selectWeapon('ultimate'));
+    this.keys.four.on('down', () => this.selectWeapon('move'));
     // 드래그로 맵 둘러보기
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.dragging = { x: p.x, y: p.y, cx: this.camX, cy: this.camY };
@@ -558,11 +572,12 @@ export class BattleScene extends Phaser.Scene {
   setTouchAim(d: number) {
     this.touchAim = d;
   }
-  selectWeapon(w: 'basic' | 'special' | 'ultimate') {
+  selectWeapon(w: 'basic' | 'special' | 'ultimate' | 'move') {
     if (!this.isLocalTurn()) return;
     const cp = this.game2.currentPlayer;
     if (w === 'ultimate' && cp.gauge < MAX_GAUGE) return;
     if (w === 'special' && cp.specialCd > 0) return;
+    if (w === 'move' && cp.moveShotCd > 0) return;
     this.selected = w;
     if (!this.silent) audio.click();
   }
@@ -745,16 +760,16 @@ export class BattleScene extends Phaser.Scene {
         const owner = g.players[pr.owner];
         const col = this.weaponColor(e.weapon, owner.charType);
         const wdef = WEAPONS[e.weapon];
-        const img = this.add.image(pr.x, pr.y, `proj_${e.weapon}_${owner.charType}`).setDepth(20).setScale(wdef.scale ?? 1);
+        const img = this.add.image(pr.x, pr.y, `proj_${e.weapon}_${owner.charType}`).setDepth(20).setScale((wdef.scale ?? 1) * PROJ_VISUAL_SCALE);
         const c = Phaser.Display.Color.HexStringToColor(col).color;
         const big = (wdef.scale ?? 1) > 1.2 || wdef.look === 'big_capsule';
         const tcfg: Record<string, Phaser.Types.GameObjects.Particles.ParticleEmitterConfig> = {
-          normal: { texture: 'fx_soft', lifespan: 420, scale: { start: big ? 0.22 : 0.13, end: 0 }, alpha: { start: 0.55, end: 0 }, tint: [0xffffff, c], blendMode: 'ADD' },
-          electric: { lifespan: 260, speed: { min: 20, max: 90 }, scale: { start: 1.6, end: 0 }, tint: [0xffffff, 0xbfe4ff, c], blendMode: 'ADD' },
-          shadow: { texture: 'fx_smoke', lifespan: 520, speed: { min: 5, max: 25 }, scale: { start: 0.14, end: 0.3 }, alpha: { start: 0.55, end: 0 }, tint: [0x1a0a2a, 0x3a1a5a, c] },
-          light: { lifespan: 480, speed: { min: 5, max: 30 }, scale: { start: 1.8, end: 0 }, tint: [0xffffff, 0xfff2a0, c], blendMode: 'ADD' },
-          heal: { lifespan: 600, speed: { min: 10, max: 40 }, scale: { start: 2, end: 0 }, tint: [0xffffff, 0xb0ffc0, c], blendMode: 'ADD' },
-          dragon: { texture: 'fx_soft', lifespan: 650, speed: { min: 10, max: 40 }, scale: { start: 0.32, end: 0 }, alpha: { start: 0.7, end: 0 }, tint: [0xffffff, 0xe0c2ff, c, 0x5b1fc0], blendMode: 'ADD' },
+          normal: { texture: 'fx_soft', lifespan: 420, scale: { start: big ? 0.5 : 0.34, end: 0 }, alpha: { start: 0.55, end: 0 }, tint: [0xffffff, c], blendMode: 'ADD' },
+          electric: { lifespan: 260, speed: { min: 20, max: 90 }, scale: { start: 3.2, end: 0 }, tint: [0xffffff, 0xbfe4ff, c], blendMode: 'ADD' },
+          shadow: { texture: 'fx_smoke', lifespan: 520, speed: { min: 5, max: 25 }, scale: { start: 0.3, end: 0.6 }, alpha: { start: 0.55, end: 0 }, tint: [0x1a0a2a, 0x3a1a5a, c] },
+          light: { lifespan: 480, speed: { min: 5, max: 30 }, scale: { start: 3.6, end: 0 }, tint: [0xffffff, 0xfff2a0, c], blendMode: 'ADD' },
+          heal: { lifespan: 600, speed: { min: 10, max: 40 }, scale: { start: 4, end: 0 }, tint: [0xffffff, 0xb0ffc0, c], blendMode: 'ADD' },
+          dragon: { texture: 'fx_soft', lifespan: 650, speed: { min: 10, max: 40 }, scale: { start: 0.7, end: 0 }, alpha: { start: 0.7, end: 0 }, tint: [0xffffff, 0xe0c2ff, c, 0x5b1fc0], blendMode: 'ADD' },
         };
         const kind = wdef.trail ?? 'normal';
         const tc = tcfg[kind];
@@ -937,8 +952,9 @@ export class BattleScene extends Phaser.Scene {
         sx *= 1 + 0.06 * k;
         rot = -p.facing * 0.12 * k;
       } else if (walking) {
-        by -= Math.abs(Math.sin(v.walkDist * 0.35)) * 2.5;
-        rot = Math.sin(v.walkDist * 0.35) * 0.07;
+        // 다리가 번갈아 걷는 동안 상체는 걸음마다 살짝 출렁임
+        by -= Math.abs(Math.sin(v.walkDist * 0.3)) * 1.6;
+        rot = -p.facing * 0.04 + Math.sin(v.walkDist * 0.3) * 0.025;
       } else if (g.currentPlayer === p && g.phase === 'aiming') {
         // 조준: 각도에 따라 상체가 살짝 들림
         rot = -p.facing * ((p.angle - 30) / 90) * 0.18;
@@ -960,6 +976,7 @@ export class BattleScene extends Phaser.Scene {
       v.body.setPosition(Math.round(bx), Math.round(by));
       v.body.rotation += (rot - v.body.rotation) * Math.min(1, dt * (p.alive ? 18 : 8));
       if (!p.alive) v.body.setTint(0x8a8a9a);
+      this.syncLegs(v, p, frame, walking, bx, by, sx, sy);
       // 무기
       const showGun = false; // 무기는 캐릭터 스프라이트에 포함
       v.gun.setVisible(showGun);
@@ -1006,6 +1023,7 @@ export class BattleScene extends Phaser.Scene {
     const cp = g.currentPlayer;
     const cv = this.views[g.current];
     this.aimGfx.clear();
+    this.aimText?.setVisible(false);
     const showMarker = (g.phase === 'aiming' || g.phase === 'turnStart') && cp.alive;
     this.marker.setVisible(showMarker);
     if (showMarker) {
@@ -1016,18 +1034,36 @@ export class BattleScene extends Phaser.Scene {
           oy = cp.y - MUZZLE_HEIGHT;
         const dx = cp.facing * cosDeg(a),
           dy = -sinDeg(a);
-        // 각도 호
-        this.aimGfx.lineStyle(1, 0xffffff, 0.25);
+        // 각도 호 (0°~90° 눈금)
+        this.aimGfx.lineStyle(1.5, 0xffffff, 0.35);
         this.aimGfx.beginPath();
-        this.aimGfx.arc(ox, oy, 42, cp.facing === 1 ? -Math.PI / 2 : Math.PI, cp.facing === 1 ? 0 : -Math.PI / 2, false);
+        this.aimGfx.arc(ox, oy, 46, cp.facing === 1 ? -Math.PI / 2 : Math.PI, cp.facing === 1 ? 0 : -Math.PI / 2, false);
         this.aimGfx.strokePath();
-        // 점선 조준선
-        for (let k = 0; k < 7; k++) {
-          const d = MUZZLE_LENGTH + 6 + k * 6;
-          const al = 0.9 - k * 0.11;
-          this.aimGfx.fillStyle(this.isLocalTurn() ? 0xffe14d : 0xffffff, al);
-          this.aimGfx.fillRect(Math.round(ox + dx * d) - 1, Math.round(oy + dy * d) - 1, 2, 2);
-        }
+        // 조준 화살표: 어두운 외곽선 + 노랑→주황 몸통 + 큰 화살촉, 살짝 맥동
+        const local = this.isLocalTurn();
+        const pulse = 1 + Math.sin(t * 6) * 0.06;
+        const s0 = 26,
+          L = 72 * pulse; // 시작/끝 거리
+        const px = -dy,
+          py = dx; // 수직 방향
+        const pt = (d: number, o: number) => ({ x: ox + dx * d + px * o, y: oy + dy * d + py * o });
+        const shaft = (wd: number) => [pt(s0, -wd), pt(L - 12, -wd), pt(L - 12, wd), pt(s0, wd)];
+        const head = (wd: number, ex: number) => [pt(L - 14 - ex, -wd), pt(L + ex, 0), pt(L - 14 - ex, wd)];
+        const fill = (pts: { x: number; y: number }[], col: number, al: number) => {
+          this.aimGfx.fillStyle(col, al);
+          this.aimGfx.fillPoints(pts as Phaser.Types.Math.Vector2Like[], true);
+        };
+        const main = local ? 0xffd23f : 0xdfe8ff,
+          tip = local ? 0xff7a1a : 0x8cc4ff;
+        fill(shaft(4.2), 0x1a0a14, 0.85);
+        fill(head(10, 2.2), 0x1a0a14, 0.85);
+        fill(shaft(2.4), main, 1);
+        fill(head(8, 0), tip, 1);
+        fill([pt(s0, -0.8), pt(L - 12, -0.8), pt(L - 12, 0.2), pt(s0, 0.2)], 0xffffff, 0.75);
+        // 각도 숫자
+        const lp = pt(L + 16, 0);
+        if (!this.aimText) this.aimText = this.add.text(0, 0, '', { fontFamily: '"Pretendard","Noto Sans KR",sans-serif', fontSize: '9px', fontStyle: '900', color: '#ffe14d', stroke: '#1a0a14', strokeThickness: 3 }).setOrigin(0.5).setDepth(26).setResolution(6);
+        this.aimText.setText(`${a}°`).setPosition(Math.round(lp.x), Math.round(lp.y)).setVisible(true);
       }
     }
   }
@@ -1112,6 +1148,44 @@ export class BattleScene extends Phaser.Scene {
 
   private weaponColor(w: WeaponId, owner: CharTypeId): string {
     return WEAPONS[w].color ?? CHAR_TYPES[owner].palette.accent;
+  }
+
+  /** 다리 걷기 애니메이션: 스프라이트 하단(다리)을 좌·우로 잘라 걸음 주기에 맞춰 번갈아 들어 올리고 앞뒤로 내딛는다 */
+  private syncLegs(v: CharView, p: Player, frame: FrameName, walking: boolean, bx: number, by: number, sx: number, sy: number) {
+    const info = SPR[p.charType][frame];
+    const key = v.body.texture.key;
+    const cut = 0.8; // 키의 아래 20% = 다리
+    if (v.cropKey !== key) {
+      v.cropKey = key;
+      const w = info.w,
+        h = info.h;
+      const mid = Math.round(w * info.ox);
+      const top = Math.round(h * cut);
+      v.body.setCrop(0, 0, w, top + 1);
+      v.legL.setTexture(key).setOrigin(info.ox, 1).setCrop(0, top, mid, h - top);
+      v.legR.setTexture(key).setOrigin(info.ox, 1).setCrop(mid, top, w - mid, h - top);
+    }
+    const visible = v.body.visible;
+    // 걸음 위상: 이동 거리 기반 (멈추면 서서히 제자리)
+    const ph = v.walkDist * 0.3;
+    const amp = walking ? 1 : 0;
+    v.legAmp = (v.legAmp ?? 0) + (amp - (v.legAmp ?? 0)) * 0.3;
+    const a = v.legAmp;
+    const liftL = Math.max(0, Math.sin(ph)) * 4.2 * a,
+      liftR = Math.max(0, Math.sin(ph + Math.PI)) * 4.2 * a;
+    const strideL = Math.cos(ph) * 3.6 * a * p.facing,
+      strideR = -Math.cos(ph) * 3.6 * a * p.facing;
+    // 상체 출렁임(by)과 다리는 분리: 다리는 땅(p.y) 기준
+    const footY = Math.round(p.y) + (by - p.y) * 0.2;
+    for (const [leg, lift, stride] of [[v.legL, liftL, strideL], [v.legR, liftR, strideR]] as const) {
+      leg.setVisible(visible);
+      leg.setScale(sx * p.facing, sy);
+      leg.setPosition(Math.round(bx + stride), Math.round(footY - lift));
+      leg.rotation = v.body.rotation + (walking ? -stride * 0.03 * p.facing : 0);
+      leg.setAlpha(v.body.alpha);
+      if (v.body.isTinted) leg.setTint(v.body.tintTopLeft);
+      else leg.clearTint();
+    }
   }
 
   /** 미니맵 클릭 등으로 특정 지점 보기 */

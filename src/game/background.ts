@@ -485,25 +485,3 @@ export function buildMushroomLayer(viewW: number, viewH: number, worldW: number,
   }
   return { canvas: c, factor: f, y: camTop * fy };
 }
-
-/** 나뭇잎 사이로 비치는 햇살 (화면 고정, ADD 합성) */
-export function sunRayCanvas(w: number, h: number): HTMLCanvasElement {
-  const c = makeCanvas(w, h);
-  const ctx = c.getContext('2d')!;
-  ctx.globalCompositeOperation = 'lighter';
-  for (let i = 0; i < 6; i++) {
-    const x = w * (0.15 + i * 0.15);
-    const g = ctx.createLinearGradient(x, 0, x - h * 0.35, h);
-    g.addColorStop(0, 'rgba(255,245,200,0.16)');
-    g.addColorStop(1, 'rgba(255,245,200,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    const bw = 18 + (i % 3) * 14;
-    ctx.moveTo(x - bw, 0);
-    ctx.lineTo(x + bw, 0);
-    ctx.lineTo(x + bw - h * 0.35 + 40, h);
-    ctx.lineTo(x - bw - h * 0.35 - 20, h);
-    ctx.fill();
-  }
-  return c;
-}

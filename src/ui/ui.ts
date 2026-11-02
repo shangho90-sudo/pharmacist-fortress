@@ -404,6 +404,7 @@ export class UI {
   // ───────────── HUD (이미지1 스타일: 네이비 패널 + 하단 조작 바) ─────────────
   private minimapBase: ImageData | null = null;
   private minimapVersion = -1;
+  private lastMinimapPaint = 0;
 
   private buildHud() {
     this.removeHud();
@@ -520,8 +521,10 @@ export class UI {
     this.root.appendChild(el);
     this.hud = el;
     this.minimapVersion = -1;
-    const loop = () => {
-      this.updateHud();
+    this.lastMinimapPaint = 0;
+    let lastHud = -Infinity;
+    const loop = (now: number) => {
+      if (now - lastHud >= 1000 / 30) { this.updateHud(); lastHud = now; }
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -608,9 +611,9 @@ export class UI {
     const local = this.scene.isLocalTurn();
     // 좌상단: 바람/맵/플레이어
     const wv = el.querySelector('.wv') as HTMLElement;
-    wv.textContent = g.wind === 0 ? (g.map.windScale === 0 ? '0 (무풍)' : '0') : `${g.wind > 0 ? '' : '← '}${Math.abs(g.wind)}${g.wind > 0 ? ' →' : ''}`;
+    setText(wv, g.wind === 0 ? (g.map.windScale === 0 ? '0 (무풍)' : '0') : `${g.wind > 0 ? '' : '← '}${Math.abs(g.wind)}${g.wind > 0 ? ' →' : ''}`);
     wv.classList.toggle('strong', Math.abs(g.wind) >= 7);
-    (el.querySelector('.mn') as HTMLElement).textContent = `${g.map.icon} ${g.map.name}`;
+    setText(el.querySelector('.mn'), `${g.map.icon} ${g.map.name}`);
     const pc = el.querySelector('.pcards')!;
     if (pc.childElementCount !== g.players.length) {
       pc.innerHTML = g.players
@@ -630,7 +633,7 @@ export class UI {
       hp.classList.toggle('low', p.hp <= 25);
       setW(hp.querySelector('.fill'), p.hp);
       setW(hp.querySelector('.ghost'), p.hp);
-      (c.querySelector('.hpn') as HTMLElement).textContent = String(p.hp);
+      setText(c.querySelector('.hpn'), String(p.hp));
       const sp = c.querySelector('.bar.sp') as HTMLElement;
       sp.classList.toggle('full', p.gauge >= MAX_GAUGE);
       setW(sp.querySelector('.fill'), p.gauge);
@@ -638,17 +641,21 @@ export class UI {
     // 상단 중앙: 턴
     const sec = Math.max(0, Math.ceil(g.turnTicksLeft / TICK_RATE));
     const who = g.phase === 'over' ? '경기 종료' : `${cp.name.split(' · ').pop()}의 턴`;
-    (el.querySelector('.h-turn .who') as HTMLElement).textContent = who;
-    (el.querySelector('.h-turn .tn') as HTMLElement).textContent = `TURN ${g.turnNumber}`;
+    setText(el.querySelector('.h-turn .who'), who);
+    setText(el.querySelector('.h-turn .tn'), `TURN ${g.turnNumber}`);
     const ts = el.querySelector('.h-turn .ts') as HTMLElement;
     const timing = g.phase === 'aiming' || g.phase === 'turnStart';
-    ts.textContent = timing ? `${sec}초` : '—';
+    setText(ts, timing ? `${sec}초` : '—');
     ts.classList.toggle('warn', g.phase === 'aiming' && sec <= 5);
     // 미니맵
-    this.drawMinimap(el.querySelector('.mini canvas') as HTMLCanvasElement, g);
+    const now = performance.now();
+    if (now - this.lastMinimapPaint >= 100 || this.minimapVersion !== g.terrain.version) {
+      this.drawMinimap(el.querySelector('.mini canvas') as HTMLCanvasElement, g);
+      this.lastMinimapPaint = now;
+    }
     // 하단: 각도 다이얼
     const ang = Math.round(cp.angle);
-    (el.querySelector('.av') as HTMLElement).textContent = `${ang}°`;
+    setText(el.querySelector('.av'), `${ang}°`);
     const needle = el.querySelector('.needle') as SVGLineElement;
     const rad = (ang * Math.PI) / 180;
     // 바늘은 실제 발사 방향 (오른쪽을 보면 0°=오른쪽, 왼쪽을 보면 0°=왼쪽)
@@ -663,36 +670,36 @@ export class UI {
     wb.classList.toggle('on', this.scene.selected === 'basic');
     w2.classList.toggle('on', this.scene.selected === 'special');
     ws.classList.toggle('on', this.scene.selected === 'ultimate');
-    (wb.querySelector('.b1n') as HTMLElement).textContent = def.basic.name;
+    setText(wb.querySelector('.b1n'), def.basic.name);
     wb.title = `기본탄 · ${def.basic.name}: ${def.basic.desc}`;
-    (w2.querySelector('.sp2n') as HTMLElement).textContent = def.special.name;
-    (w2.querySelector('.sp2g') as HTMLElement).textContent = cp.specialCd > 0 ? `${cp.specialCd}턴` : 'READY';
+    setText(w2.querySelector('.sp2n'), def.special.name);
+    setText(w2.querySelector('.sp2g'), cp.specialCd > 0 ? `${cp.specialCd}턴` : 'READY');
     w2.classList.toggle('locked', cp.specialCd > 0);
     w2.title = `특수탄 · ${def.special.name}: ${def.special.desc} (사용 후 3턴 대기)`;
     ws.classList.toggle('locked', cp.gauge < MAX_GAUGE);
     ws.classList.toggle('ready', cp.gauge >= MAX_GAUGE && this.scene.selected !== 'ultimate' && local);
     setW(ws.querySelector('.charge'), cp.gauge);
-    (ws.querySelector('.spn') as HTMLElement).textContent = def.ultimate.name;
-    (ws.querySelector('.spg') as HTMLElement).textContent = cp.gauge >= MAX_GAUGE ? 'READY' : `${cp.gauge}%`;
+    setText(ws.querySelector('.spn'), def.ultimate.name);
+    setText(ws.querySelector('.spg'), cp.gauge >= MAX_GAUGE ? 'READY' : `${cp.gauge}%`);
     ws.title = `필살기 · ${def.ultimate.name}: ${def.ultimate.desc}`;
     const wm = el.querySelector('[data-w="move"]') as HTMLElement;
     wm.classList.toggle('on', this.scene.selected === 'move');
     wm.classList.toggle('locked', cp.moveShotCd > 0);
-    (wm.querySelector('.mvg') as HTMLElement).textContent = cp.moveShotCd > 0 ? `${cp.moveShotCd}턴` : 'READY';
+    setText(wm.querySelector('.mvg'), cp.moveShotCd > 0 ? `${cp.moveShotCd}턴` : 'READY');
     wm.title = '이동탄: 탄이 떨어진 위치로 캐릭터가 이동합니다 (피해 없음, 사용 후 3턴 대기)';
     // TIME
     const tm = el.querySelector('.timep .tm') as HTMLElement;
-    tm.textContent = timing ? String(sec) : '—';
+    setText(tm, timing ? String(sec) : '—');
     tm.classList.toggle('warn', g.phase === 'aiming' && sec <= 5);
     // 상태 바: 체력(현재 플레이어)·파워·이동
     const hpb = el.querySelector('.br.hp') as HTMLElement;
     setW(hpb.querySelector('.fill'), cp.hp);
     setW(hpb.querySelector('.ghost'), cp.hp);
-    (hpb.querySelector('.num') as HTMLElement).textContent = `${cp.hp} / 100`;
+    setText(hpb.querySelector('.num'), `${cp.hp} / 100`);
     const pw = this.scene.charge;
     const pwb = el.querySelector('.br.pw') as HTMLElement;
     setW(pwb.querySelector('.fill'), pw);
-    (pwb.querySelector('.num') as HTMLElement).textContent = `${Math.round(pw)} %`;
+    setText(pwb.querySelector('.num'), `${Math.round(pw)} %`);
     const last = pwb.querySelector('.last') as HTMLElement;
     if (cp.lastPower !== null) {
       last.style.display = 'block';
@@ -700,7 +707,7 @@ export class UI {
     } else last.style.display = 'none';
     const mvb = el.querySelector('.br.mv') as HTMLElement;
     setW(mvb.querySelector('.fill'), (cp.moveLeft / MOVE_PER_TURN) * 100);
-    (mvb.querySelector('.num') as HTMLElement).textContent = `${Math.round(cp.moveLeft)} / ${MOVE_PER_TURN}`;
+    setText(mvb.querySelector('.num'), `${Math.round(cp.moveLeft)} / ${MOVE_PER_TURN}`);
     // 조작 가능 여부
     const bottom = el.querySelector('.h-bottom') as HTMLElement;
     bottom.classList.toggle('idle', !(local && g.canControl));
@@ -846,5 +853,10 @@ ${s.mode === 'online' ? '<button class="btn primary" data-a="lobby">대기실로
 }
 
 function setW(el: Element | null, pct: number) {
-  if (el) (el as HTMLElement).style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  const width = `${Math.round(Math.max(0, Math.min(100, pct)) * 100) / 100}%`;
+  if (el && (el as HTMLElement).style.width !== width) (el as HTMLElement).style.width = width;
+}
+
+function setText(el: Element | null, text: string) {
+  if (el && el.textContent !== text) el.textContent = text;
 }

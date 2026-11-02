@@ -372,16 +372,21 @@ export class TerrainView {
 
   /** 변경 영역(rect)이 걸친 청크만 다시 그린다 */
   redraw(rect: Rect) {
+    this.redrawMany([rect]);
+  }
+
+  /** Multiple impacts in one frame upload each affected texture only once. */
+  redrawMany(rects: Rect[]) {
     const pad = 20; // 장식(풀잎·뿌리) 높이만큼 여유
-    const rx0 = Math.max(0, rect.x - pad),
-      ry0 = Math.max(0, rect.y - pad);
-    const rx1 = Math.min(this.terrain.w, rect.x + rect.w + pad),
-      ry1 = Math.min(this.terrain.h, rect.y + rect.h + pad);
     for (const ch of this.chunks) {
-      const ix0 = Math.max(rx0, ch.x),
-        iy0 = Math.max(ry0, ch.y);
-      const ix1 = Math.min(rx1, ch.x + ch.w),
-        iy1 = Math.min(ry1, ch.y + ch.h);
+      let ix0 = ch.x + ch.w, iy0 = ch.y + ch.h, ix1 = ch.x, iy1 = ch.y;
+      for (const rect of rects) {
+        const x0 = Math.max(ch.x, rect.x - pad), y0 = Math.max(ch.y, rect.y - pad);
+        const x1 = Math.min(ch.x + ch.w, rect.x + rect.w + pad), y1 = Math.min(ch.y + ch.h, rect.y + rect.h + pad);
+        if (x0 >= x1 || y0 >= y1) continue;
+        ix0 = Math.min(ix0, x0); iy0 = Math.min(iy0, y0);
+        ix1 = Math.max(ix1, x1); iy1 = Math.max(iy1, y1);
+      }
       if (ix0 >= ix1 || iy0 >= iy1) continue;
       this.paint(ch, ix0, iy0, ix1 - ix0, iy1 - iy0);
       ch.tex.refresh();

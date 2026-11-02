@@ -1,4 +1,6 @@
 import { applyCommand, type BattleAction, type Frame } from '../online/protocol';
+import { OnlinePlayback } from '../online/playback';
+import type { Rect } from '../core/terrain';
 import Phaser from 'phaser';
 import { planShot, type AiPlan } from '../core/ai';
 import { CHAR_TYPES, CHAR_LIST, type CharTypeId } from '../core/characters';
@@ -9,7 +11,7 @@ import { WEAPONS, type WeaponId } from '../core/weapons';
 import { MAP_INFO, MAP_LIST, type MapId } from '../core/mapgen';
 import { drawGun, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_RES, GUN_SCALE, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
 import { audio } from './audio';
-import { buildForestLayers, buildMushroomLayer, buildPineLayer, sunRayCanvas, buildSkyLayers, buildVolcanoLayers, cloudsCanvas, skyCanvas } from './background';
+import { buildForestLayers, buildMushroomLayer, buildPineLayer, buildSkyLayers, buildVolcanoLayers, cloudsCanvas, skyCanvas } from './background';
 import { Effects } from './effects';
 import { PROJECTILE_ASSETS, ProjectileVisual } from './projectiles';
 import SPRITES from '../../public/chars2/manifest.json';
@@ -90,6 +92,12 @@ export class BattleScene extends Phaser.Scene {
   private projSprites = new Map<number, ProjectileVisual>();
   private fx!: Effects;
   private acc = 0;
+  private playback: OnlinePlayback | null = null;
+  private previousPlayers: { x: number; y: number }[] = [];
+  private dirtyTerrain: Rect[] = [];
+  private catchingUp = false;
+  private renderZoom = ZOOM;
+  private slowFrames = 0;
   private bgImages: { img: Phaser.GameObjects.Image | Phaser.GameObjects.TileSprite; factor: number; y: number; kind: 'layer' | 'sky' | 'cloud'; ox?: number; oy?: number; bob?: number; bobSpeed?: number; phase?: number; spin?: number }[] = [];
   private aimGfx!: Phaser.GameObjects.Graphics;
   private aimText: Phaser.GameObjects.Text | null = null;
@@ -217,6 +225,9 @@ export class BattleScene extends Phaser.Scene {
     this.terrainView = new TerrainView(this, g.terrain, g.material, g.mapId, cfg.seed, 0);
     this.views = g.players.map((p) => this.makeCharView(p));
     this.acc = 0;
+    this.playback = cfg.online ? new OnlinePlayback() : null;
+    this.previousPlayers = g.players.map(p => ({ x: p.x, y: p.y }));
+    this.lastNow = performance.now();
     this.lastOnlineInput = '';
     this.lastOnlineSend = 0;
     this.charge = 0;
@@ -241,6 +252,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private clearWorld() {
+    this.playback = null;
+    this.dirtyTerrain = [];
     audio.stopVoice();
     for (const o of this.worldObjs) o.destroy();
     this.worldObjs = [];
@@ -293,10 +306,6 @@ export class BattleScene extends Phaser.Scene {
       this.bgImages.push({ img, factor: f, y: CAM_TOP * fy, kind: 'layer' });
       if (info.id === 'herb_forest') {
         addLayer(buildMushroomLayer(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed, 0.3), `bg_mush_${seed}`, -88);
-        if (!this.textures.exists('bg_rays')) this.textures.addCanvas('bg_rays', sunRayCanvas(VIEW_W, VIEW_H));
-        const rays = this.add.image(0, 0, 'bg_rays').setOrigin(0).setDepth(-80).setBlendMode(Phaser.BlendModes.ADD);
-        this.bgImages.push({ img: rays, factor: 0, y: 0, kind: 'sky' });
-        this.tweens.add({ targets: rays, alpha: { from: 0.65, to: 1 }, duration: 3200, yoyo: true, repeat: -1 });
       }
       if (info.id === 'ice_peaks') addLayer(buildPineLayer(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed), `bg_pine_${seed}`, -90);
     } else {
@@ -572,8 +581,8 @@ export class BattleScene extends Phaser.Scene {
     });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!this.dragging || !p.isDown) return;
-      const dx = (p.x - this.dragging.x) / ZOOM,
-        dy = (p.y - this.dragging.y) / ZOOM;
+      const dx = (p.x - this.dragging.x) / this.renderZoom,
+        dy = (p.y - this.dragging.y) / this.renderZoom;
       if (this.camMode !== 'free' && Math.hypot(dx, dy) < 6) return;
       if (this.camMode === 'projectile') return;
       this.camMode = 'free';
@@ -617,7 +626,11 @@ export class BattleScene extends Phaser.Scene {
     if (!this.charging) return;
     this.charging = false;
     if (!this.isLocalTurn() || !this.game2.canControl) return;
-    if (this.cfg.online) this.cfg.online.send({ kind: 'fire', weapon: this.selected, power: this.charge }, this.game2.turnNumber);
+    if (this.cfg.online) {
+      // Read wall time on release too, so a missed render frame cannot change shot power.
+      this.charge = Math.min(100, (performance.now() - this.chargeStart) / (CHARGE_TIME * 10));
+      this.cfg.online.send({ kind: 'fire', weapon: this.selected, power: this.charge }, this.game2.turnNumber);
+    }
     else this.game2.fire(this.selected, this.charge);
   }
   skipTurn() {
@@ -712,14 +725,7 @@ export class BattleScene extends Phaser.Scene {
   private lastOnlineSend = 0;
 
   applyNetworkFrame(frame: Frame): boolean {
-    if (!this.cfg.online || !this.game2 || frame.from !== this.game2.tick) return false;
-    for (const commands of frame.steps) {
-      for (const command of commands) applyCommand(this.game2, command);
-      this.game2.step();
-      this.processEvents();
-    }
-    this.acc = DT;
-    return true;
+    return !!this.cfg.online && !!this.game2 && !!this.playback?.receive(frame);
   }
 
   update() {
@@ -729,9 +735,33 @@ export class BattleScene extends Phaser.Scene {
     const now = performance.now();
     const dt = this.lastNow ? Math.min(0.25, (now - this.lastNow) / 1000) : 1 / 60;
     this.lastNow = now;
+    // Lower only this device's drawing cost after sustained low FPS.
+    // Physics, camera coverage and other participants keep the same timing.
+    if (!document.hidden && !this.paused && this.renderZoom > 1) {
+      this.slowFrames = dt > 1 / 42 ? this.slowFrames + dt : Math.max(0, this.slowFrames - dt * 2);
+      if (this.slowFrames > 2) {
+        this.renderZoom--;
+        this.slowFrames = 0;
+        this.game.scale.setGameSize(VIEW_W * this.renderZoom, VIEW_H * this.renderZoom);
+        this.cameras.main.setZoom(this.renderZoom);
+        this.game.canvas.style.imageRendering = this.renderZoom === 1 ? 'auto' : 'pixelated';
+        this.dragging = null;
+      }
+    }
     if (!this.paused) {
       this.applyHumanInput();
-      if (!this.cfg.online) {
+      if (this.playback) {
+        const deadline = performance.now() + 5;
+        this.playback.advance(dt, (commands, catchingUp) => {
+          this.catchingUp = catchingUp;
+          g.players.forEach((p, i) => { this.previousPlayers[i].x = p.x; this.previousPlayers[i].y = p.y; });
+          for (const command of commands) applyCommand(g, command);
+          g.step();
+          this.processEvents();
+        }, () => performance.now() < deadline);
+        this.catchingUp = false;
+        this.acc = this.playback.alpha * DT;
+      } else {
       this.updateAi(dt);
       // 고정 타임스텝 누적기 → 프레임 속도와 무관한 결정론적 시뮬레이션
       this.acc += dt;
@@ -745,6 +775,7 @@ export class BattleScene extends Phaser.Scene {
       if (steps >= 40) this.acc = 0;
       }
     }
+    if (this.dirtyTerrain.length) this.terrainView?.redrawMany(this.dirtyTerrain.splice(0));
     this.renderWorld(dt);
     this.updateCamera(dt);
     this.updateParallax();
@@ -766,13 +797,14 @@ export class BattleScene extends Phaser.Scene {
     const evs = g.events.splice(0);
     for (const e of evs) {
       this.handleEvent(e);
-      this.hooks.onEvent?.(e, g);
+      if (!this.catchingUp || e.type === 'damage') this.hooks.onEvent?.(e, g);
     }
   }
 
   private handleEvent(e: GameEvent) {
     const g = this.game2;
-    const sfx = !this.silent;
+    const sfx = !this.silent && !this.catchingUp;
+    if (this.catchingUp && !['turnStart', 'gameOver', 'explode', 'spawnProjectile'].includes(e.type)) return;
     switch (e.type) {
       case 'turnStart': {
         this.camMode = 'player';
@@ -816,7 +848,8 @@ export class BattleScene extends Phaser.Scene {
         const tv = this.terrainView!;
         tv.addScorch(e.x, e.y, e.radius);
         const pad = e.radius + 10;
-        tv.redraw({ x: Math.floor(e.x - pad), y: Math.floor(e.y - pad), w: Math.ceil(pad * 2), h: Math.ceil(pad * 2) });
+        this.dirtyTerrain.push({ x: Math.floor(e.x - pad), y: Math.floor(e.y - pad), w: Math.ceil(pad * 2), h: Math.ceil(pad * 2) });
+        if (this.catchingUp) break;
         const colors: number[] = [];
         for (let i = 0; i < 8; i++) {
           const ang = (i / 8) * Math.PI * 2;
@@ -921,7 +954,7 @@ export class BattleScene extends Phaser.Scene {
   // ───────────────────────── 렌더링 ─────────────────────────
   private renderWorld(dt: number) {
     const g = this.game2;
-    const alpha = this.acc / DT;
+    const alpha = Math.min(1, this.acc / DT);
     // 포탄
     for (const [id, s] of this.projSprites) {
       const pr = g.projectiles.find((q) => q.id === id);
@@ -939,6 +972,10 @@ export class BattleScene extends Phaser.Scene {
     const t = this.time.now / 1000;
     g.players.forEach((p, i) => {
       const v = this.views[i];
+      const previous = this.previousPlayers[i];
+      const interpolate = this.playback && Math.abs(p.x - previous.x) + Math.abs(p.y - previous.y) < 30;
+      const px = interpolate ? previous.x + (p.x - previous.x) * alpha : p.x;
+      const py = interpolate ? previous.y + (p.y - previous.y) * alpha : p.y;
       const fell = !p.alive && (p.deathCause === 'fall' || p.deathCause === 'liquid');
       if (fell) {
         v.body.setVisible(p.y < (g.map.liquidY !== null ? g.map.liquidY + 30 : g.worldH + 80));
@@ -952,9 +989,9 @@ export class BattleScene extends Phaser.Scene {
       v.shootTimer = Math.max(0, v.shootTimer - dt);
       v.knock *= Math.pow(0.0005, dt);
       v.blinkTimer -= dt;
-      const moved = Math.abs(p.x - v.lastX);
+      const moved = Math.abs(px - v.lastX);
       v.walkDist += moved;
-      v.lastX = p.x;
+      v.lastX = px;
       // 단일 일러스트 → 변형(스케일/기울기/점프)으로 애니메이션
       const isWinner = g.phase === 'over' && p.alive && g.winnerTeam === p.team;
       const walking = moved > 0.01 && p.grounded && p.alive;
@@ -962,8 +999,8 @@ export class BattleScene extends Phaser.Scene {
       let sx = cs,
         sy = cs,
         rot = 0,
-        bx = p.x + v.knock,
-        by = p.y;
+        bx = px + v.knock,
+        by = py;
       if (!p.alive) {
         rot = -p.facing * (Math.PI / 2);
       } else if (isWinner) {
@@ -1001,7 +1038,7 @@ export class BattleScene extends Phaser.Scene {
       if (v.body.texture.key !== key) v.body.setTexture(key).setOrigin(SPR[p.charType][frame].ox, 1);
       // 좌우 반전은 음수 스케일(발 중심 기준 대칭)
       v.body.setScale(sx * p.facing, sy);
-      v.body.setPosition(Math.round(bx), Math.round(by));
+      v.body.setPosition(bx, by);
       v.body.rotation += (rot - v.body.rotation) * Math.min(1, dt * (p.alive ? 18 : 8));
       if (!p.alive) v.body.setTint(0x8a8a9a);
       this.syncLegs(v, p, frame, walking, bx, by, sx, sy);
@@ -1021,7 +1058,7 @@ export class BattleScene extends Phaser.Scene {
       const ground = p.alive && !fell ? this.game2.terrain.surfaceBelow(p.x, p.y - 2) : -1;
       const gap = ground >= 0 ? ground - p.y : 999;
       v.shadow.setVisible(gap < 60 && !fell);
-      if (gap < 60) v.shadow.setPosition(Math.round(p.x), ground + 1).setAlpha(0.42 * (1 - gap / 60)).setScale(0.62 * (1 - gap / 120), 0.14);
+      if (gap < 60) v.shadow.setPosition(px, ground + 1).setAlpha(0.42 * (1 - gap / 60)).setScale(0.62 * (1 - gap / 120), 0.14);
       // 이름판 + 체력바 (발밑, 이미지1 스타일)
       v.shownHp += (p.hp - v.shownHp) * Math.min(1, dt * 6);
       const show = p.alive && !fell;
@@ -1030,7 +1067,7 @@ export class BattleScene extends Phaser.Scene {
       v.hpBar.clear();
       if (show) {
         const pw = 56,
-          px0 = Math.round(p.x - pw / 2),
+          px0 = Math.round(px - pw / 2),
           py0 = Math.round(by + 9);
         const team = p.team === 0 ? 0x3b82f6 : 0xef4444;
         // 체력바
@@ -1043,8 +1080,8 @@ export class BattleScene extends Phaser.Scene {
         v.hpBar.fillStyle(0x0a1838, 0.94).fillRoundedRect(px0, py0, pw, 21, 3);
         v.hpBar.lineStyle(1, 0x4f8dff, 1).strokeRoundedRect(px0 + 0.5, py0 + 0.5, pw - 1, 20, 3);
         v.hpBar.fillStyle(team, 1).fillRect(px0 + 3, py0 + 3, 2, 15);
-        v.label.setPosition(Math.round(p.x + 2), py0 + 1);
-        v.hpText.setText(`${p.hp} / 100`).setPosition(Math.round(p.x + 2), py0 + 11);
+        v.label.setPosition(Math.round(px + 2), py0 + 1);
+        v.hpText.setText(`${p.hp} / 100`).setPosition(Math.round(px + 2), py0 + 11);
       }
     });
     // 현재 턴 표시 + 조준선
@@ -1055,11 +1092,11 @@ export class BattleScene extends Phaser.Scene {
     const showMarker = (g.phase === 'aiming' || g.phase === 'turnStart') && cp.alive;
     this.marker.setVisible(showMarker);
     if (showMarker) {
-      this.marker.setPosition(Math.round(cp.x), Math.round(cv.body.y - 92 + Math.sin(t * 5) * 2.5));
+      this.marker.setPosition(cv.body.x, Math.round(cv.body.y - 92 + Math.sin(t * 5) * 2.5));
       if (g.phase === 'aiming') {
         const a = Math.round(cp.angle);
-        const ox = cp.x,
-          oy = cp.y - MUZZLE_HEIGHT;
+        const ox = cv.body.x,
+          oy = cv.body.y - MUZZLE_HEIGHT;
         const dx = cp.facing * cosDeg(a),
           dy = -sinDeg(a);
         // 각도 호 (0°~90° 눈금)

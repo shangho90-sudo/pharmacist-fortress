@@ -9,9 +9,9 @@
   {
     "character": "du",
     "name": "두약사",
-    "voice": "Ragnar",
+    "voice": "Grungle",
     "text": "증바람 가즈아",
-    "taskId": "7a1c02bf-fae4-4cd2-8690-4948c7dc7355"
+    "taskId": "a0b51361-face-4ce7-8003-2106797f5397"
   },
   {
     "character": "gu",
@@ -44,16 +44,16 @@
   {
     "character": "seok",
     "name": "석약사",
-    "voice": "Kirk",
+    "voice": "Mark",
     "text": "대구로 놀러와",
-    "taskId": "8cd05734-f8e6-4a34-91ee-cc0f328ceccf"
+    "taskId": "705dc3df-f864-4bbc-99b0-1bbd7e1cfc73"
   },
   {
     "character": "jo",
     "name": "조약사",
-    "voice": "Elliot",
+    "voice": "Bernard",
     "text": "티어 강등 당했어요",
-    "taskId": "0ddbcea8-fd26-43af-84c9-b1559b482d9e"
+    "taskId": "9b258738-f166-4829-b8a6-5ef5860a2a34"
   },
   {
     "character": "sagong",

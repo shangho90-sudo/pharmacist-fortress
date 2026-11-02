@@ -13,7 +13,8 @@ import { Effects } from './effects';
 import { PROJECTILE_ASSETS, ProjectileVisual } from './projectiles';
 import SPRITES from '../../public/chars2/manifest.json';
 
-type FrameName = 'idle' | 'battle' | 'shoot';
+type FrameName = 'idle' | 'battle' | 'shoot' | 'walk0' | 'walk1' | 'walk2' | 'walk3';
+const ALL_FRAMES: FrameName[] = ['idle', 'battle', 'shoot', 'walk0', 'walk1', 'walk2', 'walk3'];
 const SPR = SPRITES as Record<string, Record<FrameName, { w: number; h: number; ox: number }>>;
 /** 캐릭터 화면 높이(월드 px) */
 const CHAR_WORLD_H = 80;
@@ -127,7 +128,7 @@ export class BattleScene extends Phaser.Scene {
 
   preload() {
     for (const id of PROJECTILE_ASSETS) this.load.image(`projectile_${id}`, `projectiles/${id}.png`);
-    for (const id of CHAR_LIST) for (const f of ['idle', 'battle', 'shoot']) this.load.image(`spr_${id}_${f}`, `chars2/${id}_${f}.png`);
+    for (const id of CHAR_LIST) for (const f of ALL_FRAMES) this.load.image(`spr_${id}_${f}`, `chars2/${id}_${f}.png`);
     for (const id of MAP_LIST) {
       const bd = MAP_INFO[id].backdrop;
       if (bd) this.load.image(`bg_${bd}`, `bg/${bd}.jpg`);
@@ -140,7 +141,7 @@ export class BattleScene extends Phaser.Scene {
     this.makeTextures();
     for (const id of PROJECTILE_ASSETS) this.textures.get(`projectile_${id}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
     // 일러스트(캐릭터·배경 사진)는 선형 필터, 픽셀아트(지형·무기·이펙트)는 최근접 필터
-    for (const id of CHAR_LIST) for (const f of ['idle', 'battle', 'shoot']) this.textures.get(`spr_${id}_${f}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    for (const id of CHAR_LIST) for (const f of ALL_FRAMES) this.textures.get(`spr_${id}_${f}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
     for (const id of MAP_LIST) {
       const bd = MAP_INFO[id].backdrop;
       if (bd && this.textures.exists(`bg_${bd}`)) this.textures.get(`bg_${bd}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
@@ -943,8 +944,7 @@ export class BattleScene extends Phaser.Scene {
         rot = -p.facing * 0.12 * k;
       } else if (walking) {
         // 다리가 번갈아 걷는 동안 상체는 걸음마다 살짝 출렁임
-        by -= Math.abs(Math.sin(v.walkDist * 0.3)) * 1.6;
-        rot = -p.facing * 0.04 + Math.sin(v.walkDist * 0.3) * 0.025;
+        rot = -p.facing * 0.03; // 걷기 프레임(다리 휘어짐)이 동작을 담당, 몸은 살짝 앞으로 기울임
       } else if (g.currentPlayer === p && g.phase === 'aiming') {
         // 조준: 각도에 따라 상체가 살짝 들림
         rot = -p.facing * ((p.angle - 30) / 90) * 0.18;
@@ -958,7 +958,8 @@ export class BattleScene extends Phaser.Scene {
       }
       // 프레임: 사격=공격, 내 턴(조준/충전/이동)=전투 자세, 그 외=대기
       const myTurn = g.currentPlayer === p && (g.phase === 'aiming' || g.phase === 'turnStart');
-      const frame: FrameName = !p.alive || isWinner ? 'idle' : v.shootTimer > 0 ? 'shoot' : myTurn || walking ? 'battle' : 'idle';
+      const walkFrame = `walk${Math.floor(v.walkDist / 4.5) % 4}` as FrameName;
+      const frame: FrameName = !p.alive || isWinner ? 'idle' : v.shootTimer > 0 ? 'shoot' : walking && v.hitTimer <= 0 ? walkFrame : myTurn ? 'battle' : 'idle';
       const key = `spr_${p.charType}_${frame}`;
       if (v.body.texture.key !== key) v.body.setTexture(key).setOrigin(SPR[p.charType][frame].ox, 1);
       // 좌우 반전은 음수 스케일(발 중심 기준 대칭)
@@ -1141,41 +1142,10 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /** 다리 걷기 애니메이션: 스프라이트 하단(다리)을 좌·우로 잘라 걸음 주기에 맞춰 번갈아 들어 올리고 앞뒤로 내딛는다 */
-  private syncLegs(v: CharView, p: Player, frame: FrameName, walking: boolean, bx: number, by: number, sx: number, sy: number) {
-    const info = SPR[p.charType][frame];
-    const key = v.body.texture.key;
-    const cut = 0.8; // 키의 아래 20% = 다리
-    if (v.cropKey !== key) {
-      v.cropKey = key;
-      const w = info.w,
-        h = info.h;
-      const mid = Math.round(w * info.ox);
-      const top = Math.round(h * cut);
-      v.body.setCrop(0, 0, w, top + 1);
-      v.legL.setTexture(key).setOrigin(info.ox, 1).setCrop(0, top, mid, h - top);
-      v.legR.setTexture(key).setOrigin(info.ox, 1).setCrop(mid, top, w - mid, h - top);
-    }
-    const visible = v.body.visible;
-    // 걸음 위상: 이동 거리 기반 (멈추면 서서히 제자리)
-    const ph = v.walkDist * 0.3;
-    const amp = walking ? 1 : 0;
-    v.legAmp = (v.legAmp ?? 0) + (amp - (v.legAmp ?? 0)) * 0.3;
-    const a = v.legAmp;
-    const liftL = Math.max(0, Math.sin(ph)) * 4.2 * a,
-      liftR = Math.max(0, Math.sin(ph + Math.PI)) * 4.2 * a;
-    const strideL = Math.cos(ph) * 3.6 * a * p.facing,
-      strideR = -Math.cos(ph) * 3.6 * a * p.facing;
-    // 상체 출렁임(by)과 다리는 분리: 다리는 땅(p.y) 기준
-    const footY = Math.round(p.y) + (by - p.y) * 0.2;
-    for (const [leg, lift, stride] of [[v.legL, liftL, strideL], [v.legR, liftR, strideR]] as const) {
-      leg.setVisible(visible);
-      leg.setScale(sx * p.facing, sy);
-      leg.setPosition(Math.round(bx + stride), Math.round(footY - lift));
-      leg.rotation = v.body.rotation + (walking ? -stride * 0.03 * p.facing : 0);
-      leg.setAlpha(v.body.alpha);
-      if (v.body.isTinted) leg.setTint(v.body.tintTopLeft);
-      else leg.clearTint();
-    }
+  private syncLegs(v: CharView, _p: Player, _f: FrameName, _w: boolean, _bx: number, _by: number, _sx: number, _sy: number) {
+    // 걷기는 미리 만든 4프레임(다리만 부드럽게 휘어짐, 잘린 이음새 없음)으로 표현 → 분리 다리 스프라이트는 사용 안 함
+    v.legL.setVisible(false);
+    v.legR.setVisible(false);
   }
 
   /** 미니맵 클릭 등으로 특정 지점 보기 */

@@ -3,7 +3,7 @@ const { chromium } = require('playwright');
 const errs=[]; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type()==='error') errs.push(m.text()); });
 await p.goto('http://127.0.0.1:5173/'); await p.waitForTimeout(2000);
 await p.click('[data-a=start]'); await p.waitForTimeout(300); await p.click('[data-a=ai]'); await p.waitForTimeout(400);
-await p.click('.ntile[data-id=paeng]'); await p.click('.ntile[data-id=jo]'); await p.click('.nmap[data-map=herb_forest]'); await p.click('[data-a=start]');
+await p.click('.npanel.p1'); await p.click('.ntile[data-id=' + (process.argv[2]||'paeng') + ']'); await p.click('.ntile[data-id=jo]'); await p.click('.nmap[data-map=herb_forest]'); await p.click('[data-a=start]');
 const myTurn = async () => { for (let i = 0; i < 100; i++) { const ok = await p.evaluate(() => { const s = window.__pf.scene; return s.isLocalTurn() && s.game2.canControl; }); if (ok) return; await p.waitForTimeout(400); } };
 await myTurn(); await p.waitForTimeout(500);
 await p.screenshot({ path: '/tmp/ui/f_aim.png' });

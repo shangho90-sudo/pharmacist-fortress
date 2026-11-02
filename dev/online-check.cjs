@@ -1,25 +1,35 @@
 const { chromium } = require('playwright');
 const assert=require('node:assert/strict');
+const path=require('node:path');
 (async()=>{
 const b=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--disable-background-timer-throttling','--disable-renderer-backgrounding']});
 const errors=[];const pages=[];
+const gameUrl=process.env.GAME_URL||'http://127.0.0.1:5175/';
+const roomTitle='온라인 검증 '+Date.now();
 for(const name of ['방장테스트','참가테스트','강퇴테스트']){
  const context=await b.newContext({viewport:{width:1440,height:900}}),p=await context.newPage();pages.push(p);p.on('pageerror',e=>errors.push(e.message));
- await p.goto(process.env.GAME_URL||'http://127.0.0.1:5175/');await p.waitForFunction(()=>window.__pf);
+ if(process.env.PREVIEW_LOCAL)await p.route(gameUrl+'**',async route=>{
+   const relative=decodeURIComponent(new URL(route.request().url()).pathname.slice(new URL(gameUrl).pathname.length))||'index.html';
+   const root=path.resolve('dist'),file=path.resolve(root,relative);
+   if(!file.startsWith(root+path.sep))return route.abort();
+   await route.fulfill({path:file});
+ });
+ await p.goto(gameUrl);await p.waitForFunction(()=>window.__pf);
  await p.click('[data-a=start]');assert.equal(await p.locator('[data-a=local]').count(),0);await p.click('[data-a=online]');
- await p.waitForFunction(()=>document.querySelector('[data-action=create]')&&!document.querySelector('[data-action=create]').disabled);
+ await p.waitForFunction(()=>document.querySelector('[data-action=create]')&&!document.querySelector('[data-action=create]').disabled,{},{timeout:100000});
  await p.fill('[name=nickname]',name);
 }
 const [a,c,d]=pages;
-await a.fill('[name=title]','온라인 기능 검증');await a.click('[data-action=create]');
-await c.locator('[data-action=join]').first().click();await c.waitForSelector('.online-characters');
+const join=p=>p.locator('.room-list article').filter({hasText:roomTitle}).locator('[data-action=join]').click();
+await a.fill('[name=title]',roomTitle);await a.click('[data-action=create]');
+await join(c);await c.waitForSelector('.online-characters');
 await a.click('[data-action=ready]');await c.waitForSelector('[data-character=paeng].locked');assert(await c.locator('[data-character=paeng]').isDisabled());
 assert(await a.locator('[data-action=start]').isDisabled());
 await c.click('[data-character=gu]');await c.click('[data-action=ready]');
-await d.locator('[data-action=join]').first().click();await d.waitForSelector('.online-characters');
+await join(d);await d.waitForSelector('.online-characters');
 await a.waitForFunction(()=>document.querySelectorAll('.member').length===3);
 await a.locator('.member').filter({hasText:'강퇴테스트'}).locator('[data-action=kick]').click();await d.waitForSelector('.online-browser');
-await d.locator('[data-action=join]').first().click();await d.waitForFunction(()=>document.querySelector('#online-notice')?.textContent.includes('강퇴'));
+await join(d);await d.waitForFunction(()=>document.querySelector('#online-notice')?.textContent.includes('강퇴'));
 await a.selectOption('[name=mode]','teams');await c.waitForFunction(()=>document.querySelector('[data-team=red]'));
 await c.click('[data-team=red]');await a.click('[data-team=blue]');
 await a.click('[data-action=ready]');await c.click('[data-action=ready]');

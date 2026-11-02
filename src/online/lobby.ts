@@ -13,6 +13,8 @@ export class OnlineLobby {
   status = '서버에 연결하는 중…';
   private nickname = '';
   private noticeTimer = 0;
+  private connecting = false;
+  private connectVersion = 0;
   onStart: (m: StartMatch) => void = () => {};
   onFrame: (m: Frame) => void = () => {};
   onShow: () => void = () => {};
@@ -35,9 +37,15 @@ export class OnlineLobby {
     this.element.addEventListener('input', e => { const t = e.target as HTMLInputElement; if (t.name === 'nickname') { this.nickname = t.value; try { localStorage.setItem('pf_nickname', t.value); } catch {} } });
     this.render();
   }
-  async connect() { this.status = '서버에 연결하는 중…'; this.render(); try { await this.client.connect(); } catch (e) { this.status = (e as Error).message; this.render(); } }
+  async connect() {
+    const version = ++this.connectVersion;
+    this.connecting = true; this.status = '서버에 연결하는 중… 첫 접속은 약 1분 걸릴 수 있어요.'; this.render();
+    try { await this.client.connect(); }
+    catch (e) { if (version === this.connectVersion) this.status = (e as Error).message; }
+    finally { if (version === this.connectVersion) { this.connecting = false; this.render(); } }
+  }
   show() { this.playing = false; this.render(); }
-  close() { this.client.close(); window.clearTimeout(this.noticeTimer); }
+  close() { this.connectVersion++; this.client.close(); window.clearTimeout(this.noticeTimer); }
   private notice(message: string) {
     let toast = document.getElementById('online-notice');
     if (!toast) { toast = document.createElement('div'); toast.id = 'online-notice'; document.body.appendChild(toast); }
@@ -76,7 +84,7 @@ export class OnlineLobby {
     const cursor = focused ? (document.activeElement as HTMLInputElement).selectionStart : null;
     const r = this.room, me = r?.members.find(m => m.id === this.client.id), host = r?.host === this.client.id;
     this.element.innerHTML = `<div class="online-shell"><header><div><small>PHARMACIST FORTRESS · ONLINE</small><h1>${r ? esc(r.title) : '온라인 대전'}</h1></div><button data-action="${r ? 'leave' : 'back'}" class="btn ghost">${r ? '방 나가기' : '메인으로'}</button></header>
-      ${this.status ? `<div class="online-state">${esc(this.status)}<button class="btn" data-action="retry">다시 연결</button></div>` : ''}
+      ${this.status ? `<div class="online-state">${esc(this.status)}<button class="btn" data-action="retry" ${this.connecting ? 'disabled' : ''}>${this.connecting ? '연결 중…' : '다시 연결'}</button></div>` : ''}
       ${r && me ? this.roomMarkup(r, me.id, !!host) : `<div class="online-browser"><section class="online-create"><h2>로그인 없이 바로 참여</h2><p>닉네임을 정하고 방을 만들거나 공개 대기실에 입장하세요.</p>
         <label>닉네임<input name="nickname" maxlength="16" placeholder="닉네임" value="${esc(this.nickname)}"></label>
         <label>대기실 이름<input name="title" maxlength="32" placeholder="함께 즐겨요!" value="${esc(draftTitle)}"></label>

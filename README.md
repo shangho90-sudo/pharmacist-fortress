@@ -64,7 +64,7 @@ npm run build    # dist/ 정적 빌드
 1. ✅ 핵심 게임
 2. 그래픽 고도화 (캐릭터 애니메이션 프레임 확장, 이펙트 스프라이트, 사운드)
 3. 콘텐츠 확장 (캐릭터 8종+ · 맵 6종 · 캐릭터별 필살기 · 선택 화면)
-4. 온라인 멀티플레이 (Node.js + WebSocket, 서버 권한 판정)
+4. ✅ 온라인 멀티플레이 (Node.js + WebSocket, 서버 권한 판정)
 5. 최적화 및 배포
 
 ### 캐릭터 이미지 교체
@@ -97,6 +97,8 @@ npm run build    # dist/ 정적 빌드
 - 대기실은 메모리에서 운영하므로 서버가 재시작되면 초기화됩니다. 배포는 진행 중인 경기가 없을 때 권장합니다.
 
 개발: `npm run server` (3001), `npm run dev`. `public/online-config.json`에 WebSocket 주소를 설정합니다.
-운영: Dockerfile / railway.json으로 전용 단일 인스턴스 서버를 배포하고 `/health`로 확인합니다. 프런트엔드는 기존 GitHub Pages를 사용합니다.
+운영: Render Peter's workspace의 `pharmacist-fortress-online` (Singapore, Free, 단일 인스턴스). `fortress-online` 브랜치에서 `npm ci` → `npm run server`로 배포합니다. 서버 변경 시 이 브랜치도 최신 상태로 유지해야 합니다. 프런트엔드는 기존 GitHub Pages의 `main` 배포를 사용합니다.
+서버 상태: https://pharmacist-fortress-online.onrender.com/health · 무료 서버는 유휴 상태에서 잠들며 첫 접속에 약 1분이 걸릴 수 있습니다. 클라이언트는 최대 90초 동안 서버 준비를 기다립니다.
+Dockerfile / railway.json은 다른 호스팅으로 옮길 때 사용할 수 있습니다.
 게임 규칙이나 네트워크 메시지를 변경할 때는 서버와 클라이언트를 함께 배포하고 `src/online/protocol.ts`의 버전을 갱신합니다.
 테스트: `npm test`에는 방장 권한, 준비 선점 경쟁, 팀 조건, 강퇴, 입력 검증, 서버/클라이언트 지형 동기화 검사가 포함됩니다.

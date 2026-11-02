@@ -1,12 +1,14 @@
-// 절차적 픽셀아트 생성기. 모든 프레임은 동일한 캔버스 크기/기준점을 사용 → 애니메이션 중 잘림·흔들림 없음.
-import { CHAR_TYPES, type CharTypeId, type CharTypeDef } from '../core/characters';
+// 무기·탄·이펙트용 절차적 픽셀아트 생성기. 캐릭터는 public/chars/*.png (레퍼런스 일러스트에서 추출).
 
-export const CHAR_W = 40;
-export const CHAR_H = 48;
-export const GUN_W = 46;
-export const GUN_H = 18;
+import type { CharTypeDef, GunStyle } from '../core/characters';
+import type { ProjLook } from '../core/weapons';
+
+/** 캐릭터 PNG: 높이 120px 텍스처를 0.5배로 표시 → 월드 60px (줌 2에서 화면 1:1 픽셀) */
+export const CHAR_SCALE = 0.5;
+export const GUN_W = 48;
+export const GUN_H = 20;
 export const GUN_PIVOT_X = 12;
-export const GUN_PIVOT_Y = 9;
+export const GUN_PIVOT_Y = 10;
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -33,379 +35,157 @@ function ellipse(ctx: Ctx, cx: number, cy: number, rx: number, ry: number, color
   }
 }
 
-// 공통 팔레트 (레퍼런스: 흰 가운 + 검은 셔츠/바지 + 흰 운동화 + 검은 머리)
-const SKIN = '#ffdcc0';
-const SKIN_SH = '#efb594';
-const SKIN_DK = '#c98a6e';
-const OUTLINE = '#3a2028';
-const HAIR = '#1f1c26';
-const HAIR_MID = '#2f2b3a';
-const HAIR_HI = '#4d485e';
-const HAIR_DK = '#0e0c13';
+const SKIN = '#ffd6b8';
+const SKIN_SH = '#e8a888';
 const COAT = '#f5f7fc';
 const COAT_SH = '#cfd6e4';
-const COAT_DK = '#9aa4ba';
 const COAT_OL = '#525b72';
-const SHIRT = '#22202b';
-const SHIRT_HI = '#36333f';
-const PANTS = '#1d1b24';
-const PANTS_HI = '#34313f';
-const SHOE = '#f6f6fa';
-const SHOE_SH = '#c4c6d2';
-const SHOE_OL = '#3e3f4e';
-const WHITE = '#ffffff';
-const MOUTH = '#8e2a34';
-const GOLD = '#e0ac2a';
+const DARK = '#1c1826';
+const METAL = '#5a6a8a';
+const METAL_L = '#aab8d0';
 
-export type Eyes = 'open' | 'closed' | 'squint' | 'x' | 'happy' | 'fierce';
-export type Mouth = 'neutral' | 'open' | 'smile' | 'frown' | 'grit' | 'grin';
-
-export interface Pose {
-  upperDy: number;
-  upperDx: number;
-  legL: number;
-  legR: number;
-  legLiftL: number;
-  legLiftR: number;
-  eyes: Eyes;
-  mouth: Mouth;
-  armsUp: boolean;
-  backArm: boolean;
-}
-
-const BASE: Pose = { upperDy: 0, upperDx: 0, legL: 0, legR: 0, legLiftL: 0, legLiftR: 0, eyes: 'open', mouth: 'neutral', armsUp: false, backArm: true };
-
-function spike(ctx: Ctx, x: number, baseY: number, h: number, lean: number, w = 3) {
-  for (let i = 0; i < h; i++) {
-    const ww = Math.max(1, Math.round(w * (1 - i / h)));
-    const xx = x + Math.round(lean * i * 0.7) + Math.floor((w - ww) / 2);
-    px(ctx, xx, baseY - i, ww, 1, i === 0 ? HAIR : HAIR_DK);
-    if (ww > 1 && i < h - 1) px(ctx, xx + (lean < 0 ? ww - 1 : 0), baseY - i, 1, 1, HAIR_MID);
-  }
-}
-
-function drawHead(ctx: Ctx, def: CharTypeDef, ox: number, oy: number, eyes: Eyes, mouth: Mouth) {
-  const hx = 21 + ox,
-    hy = 15 + oy;
-  // 뒷머리 (뒤통수 = 왼쪽)
-  ellipse(ctx, hx - 2, hy - 1.5, 10.4, 9.6, HAIR_DK, (_x, y) => y <= hy + 5);
-  ellipse(ctx, hx - 2, hy - 1.5, 9.5, 8.7, HAIR, (_x, y) => y <= hy + 4);
-  // 뻗친 머리
-  const spikes: [number, number, number, number][] = [
-    [hx - 12, hy - 1, 3, -1.3],
-    [hx - 10, hy - 6, 3, -1],
-    [hx - 6, hy - 9, 3, -0.6],
-    [hx - 2, hy - 10, 3, 0],
-    [hx + 3, hy - 9, 2, 0.8],
-  ];
-  for (const [sx, sy, h, l] of spikes) spike(ctx, sx, sy, h, l, 4);
-  // 얼굴
-  ellipse(ctx, hx + 1, hy + 2, 9.8, 8.9, OUTLINE, (x) => x > hx - 7);
-  ellipse(ctx, hx + 1, hy + 2, 8.9, 8.0, SKIN);
-  ellipse(ctx, hx + 1, hy + 2, 8.9, 8.0, SKIN_SH, (x, y) => y >= hy + 8 || x <= hx - 6);
-  // 귀
-  px(ctx, hx - 6, hy + 1, 3, 4, SKIN_SH);
-  px(ctx, hx - 5, hy + 2, 1, 2, SKIN_DK);
-  // 옆머리(구레나룻)
-  px(ctx, hx - 8, hy - 2, 3, 6, HAIR);
-  px(ctx, hx - 7, hy + 4, 1, 2, HAIR);
-  // 앞머리 캡
-  ellipse(ctx, hx + 0.5, hy - 3, 10.6, 7.4, HAIR_DK, (_x, y) => y <= hy - 3);
-  ellipse(ctx, hx + 0.5, hy - 3, 9.8, 6.6, HAIR, (_x, y) => y <= hy - 3);
-  // 하이라이트(윤기)
-  px(ctx, hx - 4, hy - 7, 5, 1, HAIR_HI);
-  px(ctx, hx - 5, hy - 6, 2, 1, HAIR_HI);
-  px(ctx, hx + 2, hy - 7, 2, 1, HAIR_MID);
-  px(ctx, hx - 2, hy - 8, 3, 1, HAIR_MID);
-  // 앞머리 가닥 (이마로 흘러내림)
-  const strands = [2, 3, 1, 3, 2, 1, 2, 3, 1, 2, 2, 1, 2, 1, 1];
-  for (let i = 0; i < strands.length; i++) {
-    const x = hx - 5 + i;
-    const L = strands[i];
-    px(ctx, x, hy - 3, 1, L, i % 4 === 1 ? HAIR_MID : HAIR);
-  }
-  // 눈썹
-  const by = hy + (eyes === 'fierce' ? 0 : -1);
-  px(ctx, hx - 2, by, 4, 1, HAIR_DK);
-  px(ctx, hx + 4, by, 4, 1, HAIR_DK);
-  if (eyes === 'fierce') {
-    px(ctx, hx + 1, by + 1, 1, 1, HAIR_DK);
-    px(ctx, hx + 4, by + 1, 1, 1, HAIR_DK);
-  }
-  // 눈 (뒤쪽 눈 / 앞쪽 눈)
-  const ey = hy + 2;
-  // (눈: 3x4 큰 눈동자)
-  const eyeXs = [hx - 2, hx + 4];
-  const ec = def.palette.eye;
-  for (const ex of eyeXs) {
-    switch (eyes) {
-      case 'open':
-      case 'fierce':
-        px(ctx, ex - (ex === eyeXs[1] ? 0 : 0), ey, 4, 1, OUTLINE); // 윗속눈썹
-        px(ctx, ex, ey + 1, 3, 4, ec);
-        px(ctx, ex + 1, ey + 2, 1, 2, '#1a0a14');
-        px(ctx, ex, ey + 1, 1, 1, WHITE);
-        px(ctx, ex + 2, ey + 4, 1, 1, shade(ec, 0.5));
-        px(ctx, ex + 3, ey + 1, 1, 4, WHITE);
-        if (eyes === 'fierce') px(ctx, ex, ey + 1, 4, 1, OUTLINE);
-        break;
-      case 'closed':
-        px(ctx, ex, ey + 3, 4, 1, OUTLINE);
-        break;
-      case 'happy':
-        px(ctx, ex, ey + 2, 1, 1, OUTLINE);
-        px(ctx, ex + 1, ey + 1, 2, 1, OUTLINE);
-        px(ctx, ex + 3, ey + 2, 1, 1, OUTLINE);
-        break;
-      case 'squint':
-        px(ctx, ex, ey + 1, 1, 1, OUTLINE);
-        px(ctx, ex + 1, ey + 2, 2, 1, OUTLINE);
-        px(ctx, ex, ey + 3, 1, 1, OUTLINE);
-        break;
-      case 'x':
-        px(ctx, ex, ey + 1, 1, 1, OUTLINE);
-        px(ctx, ex + 2, ey + 1, 1, 1, OUTLINE);
-        px(ctx, ex + 1, ey + 2, 1, 1, OUTLINE);
-        px(ctx, ex, ey + 3, 1, 1, OUTLINE);
-        px(ctx, ex + 2, ey + 3, 1, 1, OUTLINE);
-        break;
-    }
-  }
-  // 코
-  px(ctx, hx + 8, hy + 6, 1, 1, SKIN_DK);
-  // 입
-  const mx = hx + 3,
-    my = hy + 8;
-  switch (mouth) {
-    case 'neutral':
-      px(ctx, mx, my, 3, 1, MOUTH);
-      break;
-    case 'smile':
-      px(ctx, mx - 1, my - 1, 1, 1, MOUTH);
-      px(ctx, mx, my, 3, 1, MOUTH);
-      px(ctx, mx + 3, my - 1, 1, 1, MOUTH);
-      break;
-    case 'grin':
-      px(ctx, mx - 1, my - 1, 5, 2, MOUTH);
-      px(ctx, mx - 1, my - 1, 5, 1, WHITE);
-      break;
-    case 'open':
-      px(ctx, mx, my - 1, 3, 3, MOUTH);
-      px(ctx, mx + 1, my, 1, 1, '#ff8a96');
-      break;
-    case 'frown':
-      px(ctx, mx - 1, my, 1, 1, MOUTH);
-      px(ctx, mx, my - 1, 3, 1, MOUTH);
-      px(ctx, mx + 3, my, 1, 1, MOUTH);
-      break;
-    case 'grit':
-      px(ctx, mx - 1, my - 1, 5, 2, OUTLINE);
-      px(ctx, mx - 1, my - 1, 5, 1, WHITE);
-      break;
-  }
-}
-
-function drawBody(ctx: Ctx, def: CharTypeDef, ox: number, oy: number) {
-  const { accent, accentDark } = def.palette;
-  const top = 25 + oy;
-  const cx = 20 + ox;
-  // 목
-  px(ctx, cx - 2, top - 2, 4, 3, SKIN_SH);
-  for (let r = 0; r < 16; r++) {
-    const y = top + r;
-    const hw = r < 1 ? 7 : r < 10 ? 8 : 8 + Math.min(2, Math.floor((r - 9) / 3));
-    const x0 = cx - hw,
-      x1 = cx + hw - 1;
-    px(ctx, x0, y, x1 - x0 + 1, 1, COAT_OL);
-    if (r < 15) {
-      px(ctx, x0 + 1, y, x1 - x0 - 1, 1, COAT);
-      px(ctx, x0 + 1, y, 3, 1, COAT_SH); // 뒤쪽 음영
-      if (r > 3) px(ctx, x0 + 1, y, 1, 1, COAT_DK);
-    }
-  }
-  // 열린 가운 사이 검은 셔츠
-  for (let r = 0; r < 11; r++) {
-    const w = r < 3 ? 6 - r : 4;
-    px(ctx, cx - Math.floor(w / 2), top + r, w, 1, SHIRT);
-  }
-  px(ctx, cx - 1, top + 1, 1, 8, SHIRT_HI);
-  // 칼라/라펠
-  for (let r = 0; r < 5; r++) {
-    px(ctx, cx - 4 + Math.floor(r / 2), top + r, 1, 1, COAT_OL);
-    px(ctx, cx + 3 - Math.floor(r / 2), top + r, 1, 1, COAT_OL);
-  }
-  px(ctx, cx - 6, top, 2, 2, COAT);
-  px(ctx, cx + 4, top, 2, 2, COAT);
-  // 벨트
-  px(ctx, cx - 2, top + 9, 4, 1, '#0f0e14');
-  px(ctx, cx - 1, top + 9, 2, 1, GOLD);
-  // 가운 자락 사이 (다리 사이로 갈라짐)
-  px(ctx, cx - 1, top + 11, 2, 5, PANTS);
-  px(ctx, cx - 2, top + 11, 1, 4, COAT_OL);
-  px(ctx, cx + 1, top + 11, 1, 4, COAT_OL);
-  // 주머니 + 펜
-  px(ctx, cx - 7, top + 6, 4, 1, COAT_DK);
-  px(ctx, cx - 7, top + 6, 1, 3, COAT_DK);
-  px(ctx, cx - 4, top + 6, 1, 3, COAT_DK);
-  px(ctx, cx - 6, top + 4, 1, 2, accent);
-  // 앞주머니
-  px(ctx, cx + 3, top + 11, 4, 1, COAT_SH);
-  // 테마색 포인트 (어깨 패치/밑단)
-  px(ctx, cx + 5, top + 1, 2, 1, accent);
-  px(ctx, cx - 9, top + 14, 3, 1, accentDark);
-  px(ctx, cx + 6, top + 14, 3, 1, accentDark);
-}
-
-function drawLegs(ctx: Ctx, def: CharTypeDef, p: Pose) {
-  const legs: [number, number][] = [
-    [13 + p.legL, p.legLiftL],
-    [24 + p.legR, p.legLiftR],
-  ];
-  for (const [lx, lift] of legs) {
-    px(ctx, lx, 40 - lift, 4, 5, PANTS);
-    px(ctx, lx, 40 - lift, 1, 5, PANTS_HI);
-    // 운동화
-    px(ctx, lx - 1, 44 - lift, 7, 4, SHOE_OL);
-    px(ctx, lx, 44 - lift, 5, 2, SHOE);
-    px(ctx, lx, 46 - lift, 6, 1, SHOE_SH);
-    px(ctx, lx + 1, 45 - lift, 3, 1, def.palette.accent);
-  }
-}
-
-function drawBackArm(ctx: Ctx, ox: number, oy: number) {
-  px(ctx, 9 + ox, 27 + oy, 4, 8, COAT_OL);
-  px(ctx, 10 + ox, 27 + oy, 2, 7, COAT_SH);
-  px(ctx, 9 + ox, 35 + oy, 3, 2, SKIN_SH);
-}
-
-function drawArmsUp(ctx: Ctx, ox: number, oy: number) {
-  for (const ax of [8, 28]) {
-    px(ctx, ax + ox, 15 + oy, 4, 11, COAT_OL);
-    px(ctx, ax + 1 + ox, 16 + oy, 2, 10, COAT);
-    px(ctx, ax + ox, 11 + oy, 4, 4, SKIN);
-    px(ctx, ax + ox, 14 + oy, 4, 1, SKIN_SH);
-  }
-}
-
-export function drawCharacter(ctx: Ctx, id: CharTypeId, pose: Partial<Pose>) {
-  const def = CHAR_TYPES[id];
-  const p = { ...BASE, ...pose };
-  ctx.clearRect(0, 0, CHAR_W, CHAR_H);
-  if (p.backArm && !p.armsUp) drawBackArm(ctx, p.upperDx, p.upperDy);
-  drawLegs(ctx, def, p);
-  drawBody(ctx, def, p.upperDx, p.upperDy);
-  drawHead(ctx, def, p.upperDx, p.upperDy, p.eyes, p.mouth);
-  if (p.armsUp) drawArmsUp(ctx, p.upperDx, p.upperDy);
-}
-
-/** 무기 + 앞팔. (GUN_PIVOT_X, GUN_PIVOT_Y)가 어깨 회전축. */
-export function drawGun(ctx: Ctx, id: CharTypeId) {
-  const def = CHAR_TYPES[id];
-  const { accent, accentDark, accentLight, glow } = def.palette;
+/** 무기 + 앞팔. (GUN_PIVOT_X, GUN_PIVOT_Y) = 어깨 회전축, 오른쪽이 포구 */
+export function drawGun(ctx: Ctx, style: GunStyle, pal: CharTypeDef['palette']) {
+  const { accent: A, accentDark: D, accentLight: L, glow: G } = pal;
   ctx.clearRect(0, 0, GUN_W, GUN_H);
-  if (id === 'paeng') {
-    // 레드&화이트 캡슐 바주카
-    px(ctx, 1, 5, 9, 8, '#2a2630'); // 후미
-    px(ctx, 2, 6, 7, 6, '#4a4552');
-    px(ctx, 9, 4, 2, 10, accentDark);
-    px(ctx, 11, 4, 24, 10, '#3a2a30');
-    px(ctx, 11, 5, 24, 8, '#f4f4f8');
-    px(ctx, 11, 10, 24, 3, '#d0d0dc');
-    for (const bx of [15, 23, 31]) {
-      px(ctx, bx, 5, 3, 8, accent);
-      px(ctx, bx, 10, 3, 3, accentDark);
-    }
-    px(ctx, 11, 6, 24, 1, WHITE);
-    // 확장된 포구
-    px(ctx, 35, 2, 10, 14, accentDark);
-    px(ctx, 36, 3, 9, 12, accent);
-    px(ctx, 36, 3, 9, 2, accentLight);
-    px(ctx, 43, 5, 2, 8, '#3a0a10');
-    px(ctx, 44, 6, 1, 6, glow);
-    // 손잡이
-    px(ctx, 18, 13, 3, 4, '#2a2630');
-  } else {
-    // 보라빛 에너지 캡슐포
-    px(ctx, 1, 4, 10, 10, '#1d1030');
-    px(ctx, 2, 5, 8, 8, '#33204f');
-    px(ctx, 3, 6, 2, 6, accent);
-    px(ctx, 11, 3, 22, 12, '#160a26');
-    px(ctx, 12, 4, 20, 10, '#2b1746');
-    // 유리 캡슐 코어
-    px(ctx, 14, 6, 16, 6, '#0f0820');
-    px(ctx, 15, 7, 14, 4, accent);
-    px(ctx, 15, 7, 14, 1, accentLight);
-    px(ctx, 22, 7, 1, 4, '#ffffff');
-    // 포구 링 (발광)
-    px(ctx, 33, 2, 4, 14, '#160a26');
-    px(ctx, 34, 3, 2, 12, glow);
-    px(ctx, 37, 5, 8, 8, '#2b1746');
-    px(ctx, 38, 6, 7, 6, accentDark);
-    px(ctx, 43, 7, 2, 4, accentLight);
-    px(ctx, 18, 14, 3, 3, '#160a26');
+  const cy = GUN_PIVOT_Y;
+  switch (style) {
+    case 'bazooka':
+      px(ctx, 1, cy - 4, 9, 8, '#2a2630');
+      px(ctx, 9, cy - 5, 2, 10, D);
+      px(ctx, 11, cy - 5, 24, 10, '#3a2a30');
+      px(ctx, 11, cy - 4, 24, 8, '#f4f4f8');
+      px(ctx, 11, cy + 1, 24, 3, '#d0d0dc');
+      for (const bx of [15, 23, 31]) {
+        px(ctx, bx, cy - 4, 3, 8, A);
+        px(ctx, bx, cy + 1, 3, 3, D);
+      }
+      px(ctx, 11, cy - 3, 24, 1, '#fff');
+      px(ctx, 35, cy - 7, 11, 14, D);
+      px(ctx, 36, cy - 6, 10, 12, A);
+      px(ctx, 36, cy - 6, 10, 2, L);
+      px(ctx, 44, cy - 4, 2, 8, '#3a0a10');
+      break;
+    case 'cannon':
+    case 'dragon':
+      px(ctx, 2, cy - 6, 10, 12, DARK);
+      px(ctx, 3, cy - 5, 8, 10, style === 'dragon' ? '#33204f' : '#1d3a24');
+      px(ctx, 12, cy - 7, 22, 14, DARK);
+      px(ctx, 13, cy - 6, 20, 12, D);
+      px(ctx, 15, cy - 3, 16, 6, '#0f0820');
+      px(ctx, 16, cy - 2, 14, 4, A);
+      px(ctx, 16, cy - 2, 14, 1, L);
+      if (style === 'cannon') {
+        px(ctx, 20, cy - 6, 5, 2, '#fff');
+        px(ctx, 21, cy - 7, 3, 4, '#fff');
+      }
+      px(ctx, 34, cy - 8, 4, 16, DARK);
+      px(ctx, 35, cy - 7, 2, 14, G);
+      px(ctx, 38, cy - 5, 8, 10, D);
+      px(ctx, 39, cy - 4, 7, 8, A);
+      px(ctx, 44, cy - 2, 2, 4, L);
+      break;
+    case 'staff':
+      px(ctx, 4, cy - 1, 32, 3, DARK);
+      px(ctx, 5, cy - 1, 30, 1, METAL_L);
+      px(ctx, 30, cy - 3, 3, 7, METAL);
+      ellipse(ctx, 40, cy, 7.5, 7.5, D);
+      ellipse(ctx, 40, cy, 6.3, 6.3, A);
+      ellipse(ctx, 38.5, cy - 2, 2.5, 2.5, L);
+      px(ctx, 39, cy - 4, 3, 9, '#fff');
+      px(ctx, 36, cy - 1, 9, 3, '#fff');
+      break;
+    case 'bow':
+      // 화살
+      px(ctx, 6, cy, 34, 1, '#7a5a2a');
+      px(ctx, 40, cy - 2, 4, 5, A);
+      px(ctx, 44, cy - 1, 3, 3, L);
+      px(ctx, 6, cy - 2, 4, 5, '#fff');
+      // 활대 (세로 곡선)
+      for (let y = 0; y < GUN_H; y++) {
+        const t = (y - cy) / cy;
+        const x = 30 + Math.round((1 - t * t) * 5);
+        px(ctx, x, y, 2, 1, y % 5 === 0 ? L : A);
+        px(ctx, x - 1, y, 1, 1, D);
+      }
+      px(ctx, 30, 0, 1, GUN_H, 'rgba(255,255,255,0.7)');
+      break;
+    case 'sniper':
+      px(ctx, 2, cy - 2, 12, 6, DARK);
+      px(ctx, 6, cy + 3, 4, 5, DARK);
+      px(ctx, 12, cy - 3, 18, 6, '#2a1840');
+      px(ctx, 13, cy - 2, 16, 3, D);
+      px(ctx, 30, cy - 1, 16, 3, '#2a1840');
+      px(ctx, 30, cy - 1, 16, 1, A);
+      px(ctx, 44, cy - 2, 3, 5, DARK);
+      // 스코프
+      px(ctx, 16, cy - 8, 12, 4, DARK);
+      px(ctx, 17, cy - 7, 10, 2, A);
+      px(ctx, 26, cy - 8, 3, 4, G);
+      px(ctx, 20, cy - 4, 2, 2, DARK);
+      break;
+    case 'book':
+      // 펼친 마법서 (손 앞에 떠 있음)
+      px(ctx, 24, cy - 8, 20, 16, '#2a3550');
+      px(ctx, 25, cy - 7, 8, 14, '#e8eef8');
+      px(ctx, 35, cy - 7, 8, 14, '#e8eef8');
+      px(ctx, 33, cy - 8, 2, 16, D);
+      for (let y = cy - 5; y < cy + 6; y += 3) {
+        px(ctx, 26, y, 6, 1, L);
+        px(ctx, 36, y, 6, 1, L);
+      }
+      px(ctx, 27, cy - 2, 3, 3, A);
+      px(ctx, 37, cy - 2, 3, 3, A);
+      ellipse(ctx, 46, cy, 2, 2, G);
+      break;
+    case 'gatling':
+      px(ctx, 2, cy - 5, 12, 10, DARK);
+      px(ctx, 12, cy - 6, 10, 12, '#e8eef8');
+      px(ctx, 12, cy - 6, 10, 2, '#fff');
+      px(ctx, 14, cy - 3, 6, 6, A);
+      px(ctx, 15, cy - 2, 4, 1, '#fff');
+      px(ctx, 16, cy - 3, 2, 6, '#fff');
+      for (const by of [-5, -1, 3]) {
+        px(ctx, 22, cy + by, 22, 3, METAL);
+        px(ctx, 22, cy + by, 22, 1, METAL_L);
+      }
+      px(ctx, 30, cy - 6, 3, 12, D);
+      px(ctx, 42, cy - 6, 4, 12, A);
+      px(ctx, 44, cy - 5, 2, 10, G);
+      break;
+    case 'axe':
+      px(ctx, 4, cy - 1, 30, 3, '#3a2a28');
+      px(ctx, 4, cy - 1, 30, 1, '#6a4a40');
+      // 도끼날
+      for (let y = -9; y <= 9; y++) {
+        const w = 8 - Math.round(Math.abs(y) * 0.45);
+        px(ctx, 32, cy + y, w + 4, 1, y === -9 || y === 9 ? '#5a5a6a' : '#c8ccd8');
+        px(ctx, 32 + w + 3, cy + y, 1, 1, '#ffffff');
+      }
+      px(ctx, 35, cy - 3, 3, 7, A);
+      px(ctx, 33, cy - 1, 7, 3, A);
+      px(ctx, 30, cy - 3, 3, 7, D);
+      break;
+    case 'syringe':
+      px(ctx, 2, cy - 6, 3, 12, METAL);
+      px(ctx, 4, cy - 1, 4, 3, METAL_L);
+      px(ctx, 8, cy - 6, 2, 12, METAL);
+      px(ctx, 10, cy - 5, 24, 10, '#2b3a55');
+      px(ctx, 11, cy - 4, 22, 8, '#d6f1ff');
+      px(ctx, 11, cy - 1, 16, 4, A);
+      px(ctx, 11, cy - 1, 16, 1, L);
+      for (let x = 14; x < 33; x += 4) px(ctx, x, cy - 4, 1, 2, '#7b8bab');
+      px(ctx, 11, cy - 4, 22, 1, '#fff');
+      px(ctx, 34, cy - 2, 4, 4, METAL);
+      px(ctx, 38, cy - 1, 9, 2, METAL_L);
+      break;
   }
-  // 앞팔 (흰 소매 + 손)
-  px(ctx, 7, 9, 12, 5, COAT_OL);
-  px(ctx, 8, 10, 10, 3, COAT);
-  px(ctx, 8, 12, 10, 1, COAT_SH);
-  px(ctx, 17, 11, 4, 4, SKIN);
-  px(ctx, 17, 14, 4, 1, SKIN_SH);
-}
-
-export interface CharFrames {
-  [name: string]: HTMLCanvasElement;
-}
-
-export const FRAME_NAMES = ['idle0', 'idle1', 'blink', 'walk0', 'walk1', 'walk2', 'walk3', 'aim', 'shoot', 'hit', 'win', 'lose'] as const;
-
-export function buildCharacterFrames(id: CharTypeId): CharFrames {
-  const poses: Record<(typeof FRAME_NAMES)[number], Partial<Pose>> = {
-    idle0: {},
-    idle1: { upperDy: 1 },
-    blink: { eyes: 'closed' },
-    walk0: { legL: 1, legR: -1, legLiftR: 1 },
-    walk1: { upperDy: -1 },
-    walk2: { legL: -1, legR: 1, legLiftL: 1 },
-    walk3: { upperDy: -1 },
-    aim: { eyes: 'fierce', mouth: 'neutral' },
-    shoot: { eyes: 'fierce', mouth: 'grit', upperDx: -1 },
-    hit: { eyes: 'x', mouth: 'open', upperDx: -1, upperDy: 1, legL: -1 },
-    win: { eyes: 'happy', mouth: 'grin', armsUp: true },
-    lose: { eyes: 'x', mouth: 'frown' },
-  };
-  const out: CharFrames = {};
-  for (const name of FRAME_NAMES) {
-    const c = makeCanvas(CHAR_W, CHAR_H);
-    drawCharacter(c.getContext('2d')!, id, poses[name]);
-    out[name] = c;
-  }
-  const g = makeCanvas(GUN_W, GUN_H);
-  drawGun(g.getContext('2d')!, id);
-  out.gun = g;
-  return out;
-}
-
-/** UI용 확대 초상화 (무기 포함, dataURL) */
-export function portraitDataUrl(id: CharTypeId, scale = 4, frame: Partial<Pose> = {}, withGun = true): string {
-  const src = makeCanvas(CHAR_W + 16, CHAR_H);
-  const sctx = src.getContext('2d')!;
-  const body = makeCanvas(CHAR_W, CHAR_H);
-  drawCharacter(body.getContext('2d')!, id, { eyes: 'fierce', mouth: 'smile', ...frame });
-  sctx.drawImage(body, 0, 0);
-  const gun = makeCanvas(GUN_W, GUN_H);
-  drawGun(gun.getContext('2d')!, id);
-  if (withGun) {
-    sctx.save();
-    sctx.translate(20, 48 - 25);
-    sctx.rotate(-0.2);
-    sctx.drawImage(gun, -GUN_PIVOT_X, -GUN_PIVOT_Y);
-    sctx.restore();
-  }
-  const c = makeCanvas(src.width * scale, src.height * scale);
-  const ctx = c.getContext('2d')!;
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(src, 0, 0, c.width, c.height);
-  return c.toDataURL();
+  // 앞팔 (흰 가운 소매 + 손)
+  px(ctx, 7, cy - 1, 12, 6, COAT_OL);
+  px(ctx, 8, cy, 10, 4, COAT);
+  px(ctx, 8, cy + 3, 10, 1, COAT_SH);
+  px(ctx, 17, cy + 1, 5, 5, SKIN);
+  px(ctx, 17, cy + 5, 5, 1, SKIN_SH);
 }
 
 // ───────────────────────── 색 유틸 ─────────────────────────
@@ -424,29 +204,72 @@ export function shade(hex: string, amt: number): string {
 }
 
 // ───────────────────────── 탄/파티클 텍스처 ─────────────────────────
-export function drawProjectile(id: string): HTMLCanvasElement {
-  switch (id) {
-    case 'mega_capsule': {
-      const c = makeCanvas(26, 13);
-      capsule(c.getContext('2d')!, 0, 0, 26, 13, '#e3262f', '#fbfbff');
+export function drawProjectile(look: ProjLook, color: string): HTMLCanvasElement {
+  const light = shade(color, 0.55);
+  const dark = shade(color, -0.45);
+  switch (look) {
+    case 'big_capsule': {
+      const c = makeCanvas(24, 12);
+      capsule(c.getContext('2d')!, 0, 0, 24, 12, color, '#fbfbff');
       return c;
     }
-    case 'dragon_capsule': {
-      const c = makeCanvas(18, 10);
-      capsule(c.getContext('2d')!, 0, 0, 18, 10, '#6d28d9', '#d8b4fe');
+    case 'pill': {
+      const c = makeCanvas(10, 6);
+      capsule(c.getContext('2d')!, 0, 0, 10, 6, color, light);
       return c;
     }
-    case 'dragon_shard': {
+    case 'orb': {
       const c = makeCanvas(8, 8);
       const ctx = c.getContext('2d')!;
-      ellipse(ctx, 4, 4, 3.6, 3.6, '#6d28d9');
-      ellipse(ctx, 4, 4, 2.4, 2.4, '#b26bff');
-      ellipse(ctx, 4.5, 3.5, 1.2, 1.2, '#f3e8ff');
+      ellipse(ctx, 4, 4, 3.6, 3.6, dark);
+      ellipse(ctx, 4, 4, 2.6, 2.6, color);
+      ellipse(ctx, 3.5, 3.5, 1.2, 1.2, '#ffffff');
+      return c;
+    }
+    case 'arrow': {
+      const c = makeCanvas(18, 6);
+      const ctx = c.getContext('2d')!;
+      px(ctx, 0, 1, 4, 4, '#ffffff');
+      px(ctx, 2, 2, 12, 2, '#7a5a2a');
+      px(ctx, 12, 1, 4, 4, color);
+      px(ctx, 16, 2, 2, 2, light);
+      return c;
+    }
+    case 'axe': {
+      const c = makeCanvas(16, 16);
+      const ctx = c.getContext('2d')!;
+      px(ctx, 7, 1, 2, 14, '#3a2a28');
+      for (let y = -5; y <= 5; y++) {
+        const w = 6 - Math.round(Math.abs(y) * 0.5);
+        px(ctx, 9, 8 + y - 2, w, 1, '#c8ccd8');
+        px(ctx, 7 - w, 8 + y - 2, w, 1, '#c8ccd8');
+      }
+      px(ctx, 10, 4, 2, 4, color);
+      px(ctx, 4, 4, 2, 4, color);
+      return c;
+    }
+    case 'syringe': {
+      const c = makeCanvas(18, 8);
+      const ctx = c.getContext('2d')!;
+      px(ctx, 0, 1, 2, 6, '#5a6a8a');
+      px(ctx, 2, 1, 11, 6, '#2b3a55');
+      px(ctx, 3, 2, 9, 4, color);
+      px(ctx, 3, 2, 9, 1, light);
+      px(ctx, 13, 3, 5, 2, '#d0d8e8');
+      return c;
+    }
+    case 'cross': {
+      const c = makeCanvas(14, 14);
+      const ctx = c.getContext('2d')!;
+      ellipse(ctx, 7, 7, 6.8, 6.8, dark);
+      ellipse(ctx, 7, 7, 5.6, 5.6, color);
+      px(ctx, 6, 3, 2, 8, '#fff');
+      px(ctx, 3, 6, 8, 2, '#fff');
       return c;
     }
     default: {
       const c = makeCanvas(14, 8);
-      capsule(c.getContext('2d')!, 0, 0, 14, 8, '#e5383b', '#fbfbff');
+      capsule(c.getContext('2d')!, 0, 0, 14, 8, color, '#fbfbff');
       return c;
     }
   }

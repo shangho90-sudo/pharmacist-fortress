@@ -1,11 +1,11 @@
 import Phaser from 'phaser';
 import { planShot, type AiPlan } from '../core/ai';
-import { CHAR_TYPES, CHAR_LIST } from '../core/characters';
+import { CHAR_TYPES, CHAR_LIST, type CharTypeId } from '../core/characters';
 import { DT, MAX_GAUGE, MUZZLE_HEIGHT, MUZZLE_LENGTH, TICK_RATE } from '../core/constants';
 import { Game, type GameEvent, type Player, type PlayerSetup } from '../core/game';
 import { cosDeg, sinDeg } from '../core/physics';
-import { WEAPONS } from '../core/weapons';
-import { buildCharacterFrames, drawProjectile, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_W, pixelSquare, smokePuff, softCircle } from './art';
+import { WEAPONS, type WeaponId } from '../core/weapons';
+import { CHAR_SCALE, drawGun, drawProjectile, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
 import { audio } from './audio';
 import { buildForestLayers, cloudsCanvas, skyCanvas } from './background';
 import { Effects } from './effects';
@@ -91,7 +91,9 @@ export class BattleScene extends Phaser.Scene {
     super('battle');
   }
 
-  preload() {}
+  preload() {
+    for (const id of CHAR_LIST) this.load.image(`char_${id}`, `chars/${id}.png`);
+  }
 
   create() {
     this.cameras.main.setZoom(ZOOM);
@@ -110,10 +112,12 @@ export class BattleScene extends Phaser.Scene {
       if (!this.textures.exists(key)) this.textures.addCanvas(key, c);
     };
     for (const id of CHAR_LIST) {
-      const frames = buildCharacterFrames(id);
-      for (const [name, c] of Object.entries(frames)) add(`${id}_${name}`, c);
+      const def = CHAR_TYPES[id];
+      const g = makeCanvas(GUN_W, GUN_H);
+      drawGun(g.getContext('2d')!, def.gun, def.palette);
+      add(`gun_${id}`, g);
+      for (const w of Object.values(WEAPONS)) add(`proj_${w.id}_${id}`, drawProjectile(w.look, w.color ?? def.palette.accent));
     }
-    for (const w of Object.keys(WEAPONS)) add(`proj_${w}`, drawProjectile(w));
     add('fx_soft', softCircle(64));
     add('fx_px', pixelSquare(2));
     add('fx_smoke', smokePuff(64));
@@ -234,16 +238,16 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private makeCharView(p: Player): CharView {
-    const body = this.add.image(p.x, p.y, `${p.charType}_idle0`).setOrigin(0.5, 1).setDepth(10);
-    const gun = this.add.image(p.x, p.y - MUZZLE_HEIGHT, `${p.charType}_gun`).setOrigin(GUN_PIVOT_X / GUN_W, GUN_PIVOT_Y / GUN_H).setDepth(11);
+    const body = this.add.image(p.x, p.y, `char_${p.charType}`).setOrigin(0.5, 1).setDepth(10).setScale(CHAR_SCALE);
+    const gun = this.add.image(p.x, p.y - MUZZLE_HEIGHT, `gun_${p.charType}`).setOrigin(GUN_PIVOT_X / GUN_W, GUN_PIVOT_Y / GUN_H).setDepth(11);
     const teamColor = p.team === 0 ? '#7fd4ff' : '#ff9a9a';
     const label = this.add
-      .text(p.x, p.y - 58, p.name, { fontFamily: '"Noto Sans KR", sans-serif', fontSize: '8px', fontStyle: 'bold', color: teamColor, stroke: '#0b0814', strokeThickness: 3 })
+      .text(p.x, p.y - 72, p.name, { fontFamily: '"Noto Sans KR", sans-serif', fontSize: '8px', fontStyle: 'bold', color: teamColor, stroke: '#0b0814', strokeThickness: 3 })
       .setOrigin(0.5, 1)
       .setDepth(40)
       .setResolution(4);
     const hpBar = this.add.graphics().setDepth(40);
-    return { body, gun, label, hpBar, shownHp: p.hp, lastX: p.x, walkDist: 0, hitTimer: 0, shootTimer: 0, blinkTimer: 2 + Math.random() * 2, knock: 0, fallen: false };
+    return { body, gun, label, hpBar, shownHp: p.hp, lastX: p.x, walkDist: 0, hitTimer: 0, shootTimer: 0, blinkTimer: 0, knock: 0, fallen: false };
   }
 
   // ───────────────────────── 입력 ─────────────────────────
@@ -473,13 +477,16 @@ export class BattleScene extends Phaser.Scene {
       case 'spawnProjectile': {
         const pr = g.projectiles.find((q) => q.id === e.id);
         if (!pr) break;
-        const img = this.add.image(pr.x, pr.y, `proj_${e.weapon}`).setDepth(20);
-        const tint = e.weapon === 'basic' ? [0xffffff, 0xffd0d0] : e.weapon === 'mega_capsule' ? [0xffb0b0, 0xff4040] : [0xe9d5ff, 0xa855f7];
+        const owner = g.players[pr.owner];
+        const col = this.weaponColor(e.weapon, owner.charType);
+        const img = this.add.image(pr.x, pr.y, `proj_${e.weapon}_${owner.charType}`).setDepth(20);
+        const c = Phaser.Display.Color.HexStringToColor(col).color;
+        const big = WEAPONS[e.weapon].look === 'big_capsule';
         const trail = this.add.particles(0, 0, 'fx_soft', {
           lifespan: e.weapon === 'basic' ? 380 : 520,
-          scale: { start: e.weapon === 'mega_capsule' ? 0.22 : 0.13, end: 0 },
+          scale: { start: big ? 0.22 : 0.13, end: 0 },
           alpha: { start: 0.55, end: 0 },
-          tint,
+          tint: e.weapon === 'basic' ? [0xffffff, 0xffd0d0] : [0xffffff, c],
           blendMode: 'ADD',
           emitting: false,
         });
@@ -501,7 +508,7 @@ export class BattleScene extends Phaser.Scene {
           if (g.terrain.isSolid(sx, sy)) colors.push(tv.colorAt(sx, sy));
         }
         if (e.rect && colors.length === 0) colors.push(0x8a5a3b, 0x6e4630);
-        this.fx.explosion(e.x, e.y, e.radius, e.weapon, e.rect ? colors : []);
+        this.fx.explosion(e.x, e.y, e.radius, e.weapon, e.rect ? colors : [], this.weaponColor(e.weapon, g.players[e.owner].charType));
         if (def.shake > 0) this.cameras.main.shake(260 + def.shake * 20, 0.0015 * def.shake);
         if (sfx) audio.explosion(e.radius);
         this.camMode = 'point';
@@ -516,13 +523,19 @@ export class BattleScene extends Phaser.Scene {
         v.knock = src && src.x > g.players[e.player].x ? -5 : 5;
         this.fx.damageText(e.x, e.y - 14, e.amount);
         v.body.setTintFill(0xffffff);
-        this.time.delayedCall(70, () => v.body.clearTint());
+        this.time.delayedCall(70, () => v.body.clearTint().setTint(0xffa0a0));
+        this.time.delayedCall(260, () => v.body.clearTint());
         if (sfx) audio.hit();
+        break;
+      }
+      case 'heal': {
+        const p = g.players[e.player];
+        this.fx.damageText(p.x, p.y - 30, e.amount, '#7dffa0', '+');
         break;
       }
       case 'death': {
         const p = g.players[e.player];
-        this.fx.bigText(p.x, p.y - 64, e.cause === 'fall' ? '추락!' : 'K.O.!', '#ff6b6b');
+        this.fx.bigText(p.x, p.y - 80, e.cause === 'fall' ? '추락!' : 'K.O.!', '#ff6b6b');
         break;
       }
       case 'projectileOut':
@@ -532,7 +545,7 @@ export class BattleScene extends Phaser.Scene {
         if (sfx) audio.land();
         break;
       case 'timeout':
-        this.fx.bigText(g.players[e.player].x, g.players[e.player].y - 64, '시간 초과', '#ffd23f');
+        this.fx.bigText(g.players[e.player].x, g.players[e.player].y - 80, '시간 초과', '#ffd23f');
         break;
       case 'gameOver': {
         this.overTimer = 2.2;
@@ -564,7 +577,9 @@ export class BattleScene extends Phaser.Scene {
       }
       const x = pr.prevX + (pr.x - pr.prevX) * alpha;
       const y = pr.prevY + (pr.y - pr.prevY) * alpha;
-      s.img.setPosition(x, y).setRotation(Math.atan2(pr.vy, pr.vx));
+      s.img.setPosition(x, y);
+      if (WEAPONS[pr.weapon].look === 'axe' || WEAPONS[pr.weapon].look === 'cross') s.img.rotation += dt * 14 * pr.facing;
+      else s.img.setRotation(Math.atan2(pr.vy, pr.vx));
       s.trail.emitParticleAt(x, y, 1);
       if (!this.silent && id === g.projectiles[0].id) audio.whistleUpdate(pr.vy);
     }
@@ -572,7 +587,6 @@ export class BattleScene extends Phaser.Scene {
     const t = this.time.now / 1000;
     g.players.forEach((p, i) => {
       const v = this.views[i];
-      const def = CHAR_TYPES[p.charType];
       const fell = !p.alive && p.deathCause === 'fall';
       if (fell) {
         v.body.setVisible(p.y < g.worldH + 80);
@@ -585,25 +599,43 @@ export class BattleScene extends Phaser.Scene {
       const moved = Math.abs(p.x - v.lastX);
       v.walkDist += moved;
       v.lastX = p.x;
-      let frame = 'idle0';
+      // 단일 일러스트 → 변형(스케일/기울기/점프)으로 애니메이션
       const isWinner = g.phase === 'over' && p.alive && g.winnerTeam === p.team;
-      if (!p.alive) frame = 'lose';
-      else if (isWinner) frame = 'win';
-      else if (v.hitTimer > 0) frame = 'hit';
-      else if (v.shootTimer > 0) frame = 'shoot';
-      else if (moved > 0.01 && p.grounded) frame = `walk${Math.floor(v.walkDist / 5) % 4}`;
-      else if (g.currentPlayer === p && g.phase === 'aiming') frame = v.blinkTimer < 0.12 ? 'blink' : 'aim';
-      else frame = v.blinkTimer < 0.12 ? 'blink' : Math.floor(t * 1.6 + i) % 2 ? 'idle1' : 'idle0';
-      if (v.blinkTimer < 0) v.blinkTimer = 2.5 + Math.random() * 3;
-      v.body.setTexture(`${def.id}_${frame}`);
-      v.body.setFlipX(p.facing === -1);
-      let bx = p.x + v.knock,
+      const walking = moved > 0.01 && p.grounded && p.alive;
+      let sx = CHAR_SCALE,
+        sy = CHAR_SCALE,
+        rot = 0,
+        bx = p.x + v.knock,
         by = p.y;
-      if (isWinner) by -= Math.abs(Math.sin(t * 6)) * 6;
+      if (!p.alive) {
+        rot = -p.facing * (Math.PI / 2);
+      } else if (isWinner) {
+        by -= Math.abs(Math.sin(t * 6)) * 8;
+        rot = Math.sin(t * 12) * 0.08;
+        sy *= 1 + Math.abs(Math.cos(t * 6)) * 0.04;
+      } else if (v.hitTimer > 0) {
+        const k = v.hitTimer / 0.5;
+        rot = (v.knock > 0 ? 1 : -1) * 0.28 * k;
+        bx += Math.sin(t * 60) * 1.5 * k;
+      } else if (v.shootTimer > 0) {
+        const k = v.shootTimer / 0.35;
+        sy *= 1 - 0.07 * k;
+        sx *= 1 + 0.06 * k;
+        rot = -p.facing * 0.12 * k;
+      } else if (walking) {
+        by -= Math.abs(Math.sin(v.walkDist * 0.35)) * 2.5;
+        rot = Math.sin(v.walkDist * 0.35) * 0.07;
+      } else {
+        // 숨쉬기
+        const br = Math.sin(t * 2.6 + i * 1.7);
+        sy *= 1 + br * 0.018;
+        sx *= 1 - br * 0.01;
+      }
+      v.body.setFlipX(p.facing === -1);
+      v.body.setScale(sx, sy);
       v.body.setPosition(Math.round(bx), Math.round(by));
-      // 패배: 옆으로 쓰러짐
-      const targetRot = !p.alive && !fell ? -p.facing * (Math.PI / 2) : 0;
-      v.body.rotation += (targetRot - v.body.rotation) * Math.min(1, dt * 8);
+      v.body.rotation += (rot - v.body.rotation) * Math.min(1, dt * (p.alive ? 18 : 8));
+      if (!p.alive) v.body.setTint(0x8a8a9a);
       // 무기
       const showGun = p.alive && !isWinner;
       v.gun.setVisible(showGun);
@@ -612,13 +644,13 @@ export class BattleScene extends Phaser.Scene {
         const ang = Phaser.Math.DegToRad(Math.round(p.angle));
         const rx = p.facing * cosDeg(Math.round(p.angle)) * recoil;
         const ry = -sinDeg(Math.round(p.angle)) * recoil;
-        v.gun.setPosition(Math.round(bx + rx), Math.round(by - MUZZLE_HEIGHT + ry));
+        v.gun.setPosition(Math.round(bx + rx + p.facing * 2), Math.round(by - MUZZLE_HEIGHT + ry));
         v.gun.setScale(p.facing, 1);
         v.gun.setRotation(p.facing === 1 ? -ang : ang);
       }
       // 이름/체력바
       v.shownHp += (p.hp - v.shownHp) * Math.min(1, dt * 6);
-      const ly = by - 52;
+      const ly = by - 66;
       v.label.setPosition(Math.round(bx), Math.round(ly - 4)).setVisible(p.alive);
       v.hpBar.clear();
       if (p.alive) {
@@ -639,7 +671,7 @@ export class BattleScene extends Phaser.Scene {
     const showMarker = (g.phase === 'aiming' || g.phase === 'turnStart') && cp.alive;
     this.marker.setVisible(showMarker);
     if (showMarker) {
-      this.marker.setPosition(Math.round(cp.x), Math.round(cv.body.y - 66 + Math.sin(t * 5) * 2.5));
+      this.marker.setPosition(Math.round(cp.x), Math.round(cv.body.y - 80 + Math.sin(t * 5) * 2.5));
       if (g.phase === 'aiming') {
         const a = Math.round(cp.angle);
         const ox = cp.x,
@@ -732,6 +764,10 @@ export class BattleScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.scrollX = this.camX - cam.width / 2;
     cam.scrollY = this.camY - cam.height / 2;
+  }
+
+  private weaponColor(w: WeaponId, owner: CharTypeId): string {
+    return WEAPONS[w].color ?? CHAR_TYPES[owner].palette.accent;
   }
 
   /** 미니맵/HUD용 */

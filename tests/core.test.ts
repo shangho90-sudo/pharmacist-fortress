@@ -25,7 +25,7 @@ function simulate(t: Terrain, wind: number, angle: number, power: number, facing
 
 const setup = (): PlayerSetup[] => [
   { name: 'A', charType: 'paeng', team: 0, controller: 'ai', aiLevel: 'hard' },
-  { name: 'B', charType: 'yong', team: 1, controller: 'ai', aiLevel: 'normal' },
+  { name: 'B', charType: 'jo', team: 1, controller: 'ai', aiLevel: 'normal' },
 ];
 
 describe('포탄 물리', () => {
@@ -306,5 +306,62 @@ describe('턴/게임 흐름', () => {
       return g.stateHash();
     };
     expect(play([1 / 60])).toBe(play([1 / 144, 1 / 30, 1 / 90, 0.05]));
+  });
+});
+
+describe('캐릭터별 필살기', () => {
+  const ready = (charType: any, seed = 11) => {
+    const g = new Game({ seed, players: [
+      { name: 'A', charType, team: 0, controller: 'human' },
+      { name: 'B', charType: 'paeng', team: 1, controller: 'human' },
+    ] });
+    while (!(g.phase === 'aiming' && g.current === 0)) { if (g.phase === 'aiming') g.skipTurn(); g.step(); g.events.length = 0; }
+    g.currentPlayer.gauge = 100;
+    return g;
+  };
+
+  it('모든 캐릭터의 필살기가 오류 없이 발사·폭발하고 게이지가 초기화된다', async () => {
+    const { CHAR_LIST } = await import('../src/core/characters');
+    for (const id of CHAR_LIST) {
+      const g = ready(id);
+      expect(g.fire('special', 60)).toBe(true);
+      expect(g.players[0].gauge).toBe(0);
+      let guard = 0;
+      while (g.phase === 'flying' && guard++ < 120 * 30) g.step();
+      expect(g.phase).not.toBe('flying');
+      expect(g.events.some((e) => e.type === 'explode' || e.type === 'projectileOut')).toBe(true);
+    }
+  });
+
+  it('부채꼴 필살기는 지정 개수만큼 동시에 발사된다', () => {
+    const g = ready('sagong');
+    g.fire('special', 70);
+    expect(g.projectiles.length).toBe(5);
+    const g2 = ready('jo');
+    g2.fire('special', 70);
+    expect(g2.projectiles.length).toBe(3);
+  });
+
+  it('무풍 저격탄은 바람의 영향을 받지 않는다', () => {
+    const shoot = (wind: number) => {
+      const g = ready('cheol');
+      g.wind = wind;
+      g.setAngle(30);
+      g.fire('special', 60);
+      while (g.phase === 'flying') g.step();
+      const ex = g.events.find((e) => e.type === 'explode') as any;
+      return ex ? Math.round(ex.x) : null;
+    };
+    expect(shoot(10)).toBe(shoot(-10));
+  });
+
+  it('치유의 십자탄은 발사자의 체력을 회복한다', () => {
+    const g = ready('gu');
+    g.players[0].hp = 50;
+    g.setAngle(60);
+    g.fire('special', 55);
+    while (g.phase === 'flying') g.step();
+    expect(g.events.some((e) => e.type === 'heal')).toBe(true);
+    expect(g.players[0].hp).toBeGreaterThan(50);
   });
 });

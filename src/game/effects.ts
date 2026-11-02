@@ -10,12 +10,28 @@ interface Palette {
   ring: number;
 }
 
-const PALETTES: Record<string, Palette> = {
-  basic: { flash: 0xfff3c0, fire: [0xfff1a0, 0xffb347, 0xff6a2a, 0xe03a2a], smoke: [0x5a5058, 0x6e6470, 0x4a4048], ring: 0xfff6d0 },
-  mega_capsule: { flash: 0xffe0e0, fire: [0xffffff, 0xffd0d0, 0xff5a5a, 0xe3262f, 0x9e1018], smoke: [0x5a4448, 0x6e5458, 0x3e2e32], ring: 0xffb0b0 },
-  dragon_capsule: { flash: 0xf3e6ff, fire: [0xffffff, 0xe9d5ff, 0xc084fc, 0x8b3dff, 0x5b1fc0], smoke: [0x4a3a66, 0x5c4a78, 0x3a2e52], ring: 0xd8b4fe },
-  dragon_shard: { flash: 0xe9d5ff, fire: [0xf3e8ff, 0xb26bff, 0x7c3aed], smoke: [0x4a4058, 0x5a5068], ring: 0xd8b4fe },
-};
+function hexNum(h: string) {
+  return parseInt(h.slice(1), 16);
+}
+function mixNum(a: number, b: number, t: number) {
+  const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+  const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+  return (Math.round(ar + (br - ar) * t) << 16) | (Math.round(ag + (bg - ag) * t) << 8) | Math.round(ab + (bb - ab) * t);
+}
+
+const BASIC: Palette = { flash: 0xfff3c0, fire: [0xfff1a0, 0xffb347, 0xff6a2a, 0xe03a2a], smoke: [0x5a5058, 0x6e6470, 0x4a4048], ring: 0xfff6d0 };
+
+/** 테마색으로 폭발 팔레트 생성 */
+function paletteFor(weapon: WeaponId, color: string): Palette {
+  if (weapon === 'basic') return BASIC;
+  const c = hexNum(color);
+  return {
+    flash: mixNum(c, 0xffffff, 0.8),
+    fire: [0xffffff, mixNum(c, 0xffffff, 0.6), mixNum(c, 0xffffff, 0.25), c, mixNum(c, 0x000000, 0.35)],
+    smoke: [mixNum(c, 0x3a3440, 0.75), mixNum(c, 0x5a5060, 0.8), mixNum(c, 0x2a2430, 0.8)],
+    ring: mixNum(c, 0xffffff, 0.65),
+  };
+}
 
 /**
  * 폭발/발사/피격 이펙트. 모든 이펙트는 호출자가 넘긴 실제 충돌 좌표를 중심으로 생성된다.
@@ -32,8 +48,8 @@ export class Effects {
     return e;
   }
 
-  explosion(x: number, y: number, r: number, weapon: WeaponId, debrisColors: number[]) {
-    const pal = PALETTES[weapon] ?? PALETTES.basic;
+  explosion(x: number, y: number, r: number, weapon: WeaponId, debrisColors: number[], color: string) {
+    const pal = paletteFor(weapon, color);
     const s = r / 35;
     // 1. 섬광
     const flash = this.scene.add.image(x, y, 'fx_soft').setBlendMode(Phaser.BlendModes.ADD).setDepth(D_FX + 3).setTint(pal.flash);
@@ -154,9 +170,9 @@ export class Effects {
     );
   }
 
-  damageText(x: number, y: number, amount: number, color = '#ffe14d') {
+  damageText(x: number, y: number, amount: number, color = '#ffe14d', sign = '-') {
     const t = this.scene.add
-      .text(x, y - 8, `-${amount}`, { fontFamily: 'Galmuri11, "Noto Sans KR", sans-serif', fontSize: '12px', fontStyle: 'bold', color, stroke: '#2a0f1a', strokeThickness: 3 })
+      .text(x, y - 8, `${sign}${amount}`, { fontFamily: 'Galmuri11, "Noto Sans KR", sans-serif', fontSize: '12px', fontStyle: 'bold', color, stroke: '#2a0f1a', strokeThickness: 3 })
       .setOrigin(0.5)
       .setDepth(50)
       .setResolution(4);

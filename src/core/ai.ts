@@ -22,11 +22,11 @@ const NOISE: Record<AiLevel, { angle: number; power: number; step: number }> = {
 };
 
 /** 실제 게임과 동일한 물리로 탄착점 예측 */
-export function predictImpact(g: Game, shooter: Player, facing: 1 | -1, angle: number, power: number, terrain: Terrain = g.terrain): StepHit | null {
+export function predictImpact(g: Game, shooter: Player, facing: 1 | -1, angle: number, power: number, terrain: Terrain = g.terrain, windFactor = 1): StepHit | null {
   const pr = launch({ footX: shooter.x, footY: shooter.y, facing, angle, power });
   const bodies = g.players.filter((p) => p.alive).map((p) => bodyCircle(p, p.id));
   for (let i = 0; i < 120 * 12; i++) {
-    const hit = stepProjectile(pr, g.wind, terrain, bodies, WORLD_W, WORLD_H);
+    const hit = stepProjectile(pr, g.wind * windFactor, terrain, bodies, WORLD_W, WORLD_H);
     if (hit) return hit;
   }
   return null;
@@ -54,7 +54,7 @@ export function planShot(g: Game, rngSeed: number): AiPlan {
   let best: AiPlan = { facing, angle: 45, power: 60, weapon: useSpecial ? 'special' : 'basic', score: -Infinity };
   const evaluate = (angle: number, power: number) => {
     if (angle < 0 || angle > 90 || power < 5 || power > 100) return;
-    const hit = predictImpact(g, me, facing, angle, power);
+    const hit = predictImpact(g, me, facing, angle, power, g.terrain, weapon.windFactor ?? 1);
     if (!hit || hit.kind === 'out') return;
     let score = 0;
     for (const e of enemies) score += computeDamage(weapon.damage, weapon.radius, hit.x, hit.y, e, hit.kind === 'char' && hit.id === e.id);

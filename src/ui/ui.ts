@@ -2,7 +2,6 @@ import { CHAR_LIST, CHAR_TYPES, type CharTypeId } from '../core/characters';
 import { MAX_GAUGE, MOVE_PER_TURN, TICK_RATE, WIND_MAX } from '../core/constants';
 import type { AiLevel, Game, GameEvent, PlayerSetup } from '../core/game';
 import { MAPS } from '../core/mapgen';
-import { portraitDataUrl } from '../game/art';
 import { audio } from '../game/audio';
 import type { BattleScene } from '../game/BattleScene';
 
@@ -12,18 +11,8 @@ const h = (html: string): HTMLElement => {
   return t.content.firstElementChild as HTMLElement;
 };
 
-const portraits: Partial<Record<CharTypeId, string>> = {};
-const portraitsWin: Partial<Record<CharTypeId, string>> = {};
-const faces: Partial<Record<CharTypeId, string>> = {};
-function face(id: CharTypeId) {
-  return (faces[id] ??= portraitDataUrl(id, 4, {}, false));
-}
-function portrait(id: CharTypeId) {
-  return (portraits[id] ??= portraitDataUrl(id, 5));
-}
-function portraitWin(id: CharTypeId) {
-  return (portraitsWin[id] ??= portraitDataUrl(id, 6, { eyes: 'happy', mouth: 'grin' }));
-}
+/** 캐릭터 일러스트 (public/chars) */
+const portrait = (id: CharTypeId) => `chars/${id}.png`;
 
 type Mode = 'ai' | 'local';
 
@@ -43,7 +32,7 @@ export class UI {
   private screen: HTMLElement | null = null;
   private hud: HTMLElement | null = null;
   private modal: HTMLElement | null = null;
-  private setup: MatchSetup = { mode: 'ai', p1: 'paeng', p2: 'yong', level: 'normal', map: 'herb_forest' };
+  private setup: MatchSetup = { mode: 'ai', p1: 'paeng', p2: 'jo', level: 'normal', map: 'herb_forest' };
   private stats: number[] = [];
   private raf = 0;
   private lastTurn = -1;
@@ -81,10 +70,15 @@ export class UI {
     this.scene.startBattle({
       seed: (Math.random() * 1e9) | 0,
       demo: true,
-      players: [
-        { name: '팽약사', charType: 'paeng', team: 0, controller: 'ai', aiLevel: 'normal' },
-        { name: '용약사', charType: 'yong', team: 1, controller: 'ai', aiLevel: 'normal' },
-      ],
+      players: (() => {
+        const a = CHAR_LIST[Math.floor(Math.random() * CHAR_LIST.length)];
+        let b = a;
+        while (b === a) b = CHAR_LIST[Math.floor(Math.random() * CHAR_LIST.length)];
+        return [
+          { name: CHAR_TYPES[a].name, charType: a, team: 0, controller: 'ai' as const, aiLevel: 'normal' as const },
+          { name: CHAR_TYPES[b].name, charType: b, team: 1, controller: 'ai' as const, aiLevel: 'normal' as const },
+        ];
+      })(),
     }, { onGameOver: () => this.screen?.dataset.kind === 'title' && this.showTitle() });
     audio.playBgm('title');
     const el = h(`
@@ -110,6 +104,7 @@ export class UI {
       audio.click();
       if (a === 'ai' || a === 'local') {
         this.setup.mode = a;
+        this.selSlot = 'p1';
         this.showSelect();
       } else if (a === 'help') this.showHelp();
       else if (a === 'settings') this.toggleSettings(false);
@@ -118,38 +113,59 @@ export class UI {
   }
 
   // ───────────── 캐릭터/난이도 선택 ─────────────
+  private selSlot: 'p1' | 'p2' = 'p1';
+
   private showSelect() {
     const s = this.setup;
-    const cardHtml = (slot: 'p1' | 'p2') =>
-      CHAR_LIST.map((id) => {
-        const d = CHAR_TYPES[id];
-        return `<div class="card ${s[slot] === id ? 'on' : ''}" data-slot="${slot}" data-id="${id}" style="--glow:${d.palette.glow}55">
-          <div class="pic"><img src="${portrait(id)}" alt="${d.name}"></div>
-          <div class="nm">${d.name}</div><div class="ro">${d.roman}</div>
-          <div class="ds">${d.description}</div>
-          <div class="sp">필살기 · ${d.specialName}</div></div>`;
-      }).join('');
+    const slotName = (slot: 'p1' | 'p2') => (slot === 'p1' ? (s.mode === 'ai' ? '나' : '플레이어 1') : s.mode === 'ai' ? '상대 (AI)' : '플레이어 2');
+    const slotHtml = (slot: 'p1' | 'p2') => {
+      const d = CHAR_TYPES[s[slot]];
+      return `<div class="slot ${this.selSlot === slot ? 'on' : ''} ${slot}" data-slot="${slot}" style="--glow:${d.palette.glow}">
+        <div class="tag">${slotName(slot)}</div>
+        <img src="${portrait(d.id)}" alt="${d.name}">
+        <div class="nm">${d.name}<span>${d.roman}</span></div>
+        <div class="ti">“${d.title}”</div>
+        <div class="sp"><b>필살기</b> ${d.specialName}<br><small>${d.specialDesc}</small></div>
+      </div>`;
+    };
     const el = h(`
-      <div class="screen dark">
+      <div class="screen dark sel">
         <div class="sel-title">${s.mode === 'ai' ? 'AI 대전' : '2인 대전'} — 캐릭터 선택</div>
-        <div class="sel-row">
-          <div class="sel-col"><h3>${s.mode === 'ai' ? '나' : '플레이어 1'}</h3><div class="cards">${cardHtml('p1')}</div></div>
-          <div class="sel-col"><h3>${s.mode === 'ai' ? '상대 (AI)' : '플레이어 2'}</h3><div class="cards">${cardHtml('p2')}</div></div>
-        </div>
-        <div class="sel-row" style="align-items:center">
-          ${s.mode === 'ai' ? `<div class="sel-col"><h3>난이도</h3><div class="seg" data-g="level">${(['easy', 'normal', 'hard'] as AiLevel[]).map((l) => `<button data-v="${l}" class="${s.level === l ? 'on' : ''}">${LEVEL_NAME[l]}</button>`).join('')}</div></div>` : ''}
-          <div class="sel-col"><h3>전장</h3><div class="seg" data-g="map">${MAPS.map((m) => `<button data-v="${m.id}" class="${s.map === m.id ? 'on' : ''}">${m.name}</button>`).join('')}</div></div>
+        <div class="sel-main">
+          ${slotHtml('p1')}
+          <div class="grid-wrap">
+            <div class="hint">${slotName(this.selSlot)}의 캐릭터를 고르세요</div>
+            <div class="grid">${CHAR_LIST.map((id) => {
+              const d = CHAR_TYPES[id];
+              const on1 = s.p1 === id, on2 = s.p2 === id;
+              return `<button class="tile ${on1 ? 'p1on' : ''} ${on2 ? 'p2on' : ''}" data-id="${id}" style="--glow:${d.palette.glow}">
+                <img src="${portrait(id)}" alt=""><span>${d.name}</span>${on1 ? '<i class="b1">1P</i>' : ''}${on2 ? `<i class="b2">${s.mode === 'ai' ? 'AI' : '2P'}</i>` : ''}</button>`;
+            }).join('')}</div>
+            <div class="opts">
+              ${s.mode === 'ai' ? `<div class="seg" data-g="level">${(['easy', 'normal', 'hard'] as AiLevel[]).map((l) => `<button data-v="${l}" class="${s.level === l ? 'on' : ''}">${LEVEL_NAME[l]}</button>`).join('')}</div>` : ''}
+              <div class="seg" data-g="map">${MAPS.map((m) => `<button data-v="${m.id}" class="${s.map === m.id ? 'on' : ''}">${m.name}</button>`).join('')}</div>
+            </div>
+          </div>
+          ${slotHtml('p2')}
         </div>
         <div class="sel-actions">
           <button class="btn ghost" data-a="back">뒤로</button>
+          <button class="btn ghost" data-a="random">🎲 랜덤</button>
           <button class="btn primary" data-a="start">전투 시작!</button>
         </div>
       </div>`);
     el.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
-      const card = t.closest('.card') as HTMLElement | null;
-      if (card) {
-        s[card.dataset.slot as 'p1' | 'p2'] = card.dataset.id as CharTypeId;
+      const slot = t.closest('.slot') as HTMLElement | null;
+      if (slot) {
+        this.selSlot = slot.dataset.slot as 'p1' | 'p2';
+        audio.click();
+        return this.showSelect();
+      }
+      const tile = t.closest('.tile') as HTMLElement | null;
+      if (tile) {
+        s[this.selSlot] = tile.dataset.id as CharTypeId;
+        if (this.selSlot === 'p1') this.selSlot = 'p2';
         audio.click();
         return this.showSelect();
       }
@@ -162,6 +178,13 @@ export class UI {
         return this.showSelect();
       }
       const a = t.closest('[data-a]')?.getAttribute('data-a');
+      if (a === 'random') {
+        s.p1 = CHAR_LIST[Math.floor(Math.random() * CHAR_LIST.length)];
+        do s.p2 = CHAR_LIST[Math.floor(Math.random() * CHAR_LIST.length)];
+        while (s.p2 === s.p1);
+        audio.click();
+        return this.showSelect();
+      }
       if (a === 'back') {
         audio.click();
         this.showTitle();
@@ -318,7 +341,7 @@ export class UI {
     if (pc.childElementCount !== g.players.length) {
       pc.innerHTML = g.players
         .map(
-          (p) => `<div class="pcard"><div class="face" style="background-image:url(${face(p.charType)});--tc:${p.team === 0 ? '#7fd4ff' : '#ff9a9a'}"></div>
+          (p) => `<div class="pcard"><div class="face" style="background-image:url(${portrait(p.charType)});--tc:${p.team === 0 ? '#7fd4ff' : '#ff9a9a'}"></div>
           <div class="info"><div class="nm"><span>${p.name}</span><small class="hpn">100</small></div>
           <div class="bar hp"><i class="ghost"></i><i class="fill"></i></div><div class="bar sp"><i class="fill"></i></div></div></div>`,
         )
@@ -400,7 +423,7 @@ export class UI {
     const el = h(`
       <div class="screen dark result">
         <div class="big ${cls}">${title}</div>
-        <img class="hero" src="${portraitWin(hero)}" alt="">
+        <img class="hero" src="${portrait(hero)}" alt="">
         <div class="stats">
           ${g.players.map((p, i) => `<div class="stat">${p.name}<b>${this.stats[i]}</b>입힌 피해</div>`).join('')}
           <div class="stat">진행<b>${g.round}</b>라운드</div>

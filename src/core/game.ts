@@ -72,6 +72,7 @@ export type GameEvent =
   | { type: 'projectileOut'; x: number; y: number }
   | { type: 'spawnProjectile'; id: number; weapon: WeaponId }
   | { type: 'land'; player: number }
+  | { type: 'heal'; player: number; amount: number; hp: number }
   | { type: 'timeout'; player: number }
   | { type: 'gameOver'; winnerTeam: number | null };
 
@@ -177,11 +178,16 @@ export class Game {
     }
     if (!p.grounded) return false;
     const pw = Math.max(0, Math.min(100, Math.round(power * 10) / 10));
-    const proj = launch({ footX: p.x, footY: p.y, facing: p.facing, angle: p.angle, power: pw });
+    const shots = WEAPONS[weapon].spread ?? [{ angle: 0, power: 1 }];
+    let first: Projectile | null = null;
+    for (const sh of shots) {
+      const proj = launch({ footX: p.x, footY: p.y, facing: p.facing, angle: Math.max(-10, Math.min(100, Math.round(p.angle) + sh.angle)), power: pw * sh.power });
+      first ??= proj;
+      this.spawn(proj, weapon, p.id, p.facing);
+    }
     p.lastPower = pw;
     this.shotFiredThisTurn = true;
-    this.spawn(proj, weapon, p.id, p.facing);
-    this.events.push({ type: 'fire', player: p.id, weapon, x: proj.x, y: proj.y, power: pw, angle: Math.round(p.angle) });
+    this.events.push({ type: 'fire', player: p.id, weapon, x: first!.x, y: first!.y, power: pw, angle: Math.round(p.angle) });
     this.input = { move: 0, aim: 0 };
     this.setPhase('flying');
     return true;
@@ -288,7 +294,7 @@ export class Game {
     this.projectiles = this.projectiles.filter((pr) => {
       pr.prevX = pr.x;
       pr.prevY = pr.y;
-      const hit = stepProjectile(pr, this.wind, this.terrain, bodies, this.worldW, this.worldH);
+      const hit = stepProjectile(pr, this.wind * (WEAPONS[pr.weapon].windFactor ?? 1), this.terrain, bodies, this.worldW, this.worldH);
       if (!hit) {
         if (pr.age > PROJECTILE_MAX_TICKS) {
           this.events.push({ type: 'projectileOut', x: pr.x, y: pr.y });
@@ -327,7 +333,7 @@ export class Game {
   explode(x: number, y: number, weapon: WeaponId, owner: number, directId: number) {
     const def = WEAPONS[weapon];
     const seed = this.rng.nextU32();
-    const rect = this.terrain.carve(x, y, def.radius * def.carveScale, seed);
+    const rect = this.terrain.carve(x, y, def.radius, seed);
     this.events.push({ type: 'explode', x, y, radius: def.radius, weapon, rect, owner, seed });
     for (const p of this.players) {
       if (!p.alive) continue;
@@ -339,6 +345,12 @@ export class Game {
       if (ow && ow.team !== p.team) ow.gauge = Math.min(MAX_GAUGE, ow.gauge + amount);
       if (p.id !== owner) p.gauge = Math.min(MAX_GAUGE, p.gauge + Math.round(amount * 0.5));
       if (p.hp <= 0) this.kill(p, 'hp');
+    }
+    const ow = this.players[owner];
+    if (def.selfHeal && ow && ow.alive) {
+      const before = ow.hp;
+      ow.hp = Math.min(MAX_HP, ow.hp + def.selfHeal);
+      if (ow.hp > before) this.events.push({ type: 'heal', player: ow.id, amount: ow.hp - before, hp: ow.hp });
     }
   }
 

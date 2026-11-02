@@ -3,6 +3,7 @@ import {
   BODY_CENTER_Y,
   BODY_RADIUS,
   DT,
+  GRAVITY,
   MAX_ANGLE,
   MAX_GAUGE,
   MAX_HP,
@@ -19,7 +20,7 @@ import {
   WORLD_W,
 } from './constants';
 import { CHAR_TYPES, type CharTypeId } from './characters';
-import { generateMap } from './mapgen';
+import { generateMap, type MapId, type MapInfo } from './mapgen';
 import { bodyCircle, launch, stepGravity, stepProjectile, stepWalk, type Circle, type Mover, type Projectile } from './physics';
 import { Rng } from './rng';
 import type { Rect, Terrain } from './terrain';
@@ -49,7 +50,7 @@ export interface Player extends Mover {
   gauge: number;
   moveLeft: number;
   lastPower: number | null;
-  deathCause: 'hp' | 'fall' | null;
+  deathCause: 'hp' | 'fall' | 'liquid' | null;
 }
 
 export interface LiveProjectile extends Projectile {
@@ -68,8 +69,9 @@ export type GameEvent =
   | { type: 'fire'; player: number; weapon: WeaponId; x: number; y: number; power: number; angle: number }
   | { type: 'explode'; x: number; y: number; radius: number; weapon: WeaponId; rect: Rect | null; owner: number; seed: number }
   | { type: 'damage'; player: number; amount: number; hp: number; from: number; x: number; y: number }
-  | { type: 'death'; player: number; cause: 'hp' | 'fall' }
+  | { type: 'death'; player: number; cause: 'hp' | 'fall' | 'liquid' }
   | { type: 'projectileOut'; x: number; y: number }
+  | { type: 'splash'; x: number; y: number; weapon: WeaponId }
   | { type: 'spawnProjectile'; id: number; weapon: WeaponId }
   | { type: 'land'; player: number }
   | { type: 'heal'; player: number; amount: number; hp: number }
@@ -84,7 +86,7 @@ export interface InputState {
 export interface GameOptions {
   seed: number;
   players: PlayerSetup[];
-  mapId?: string;
+  mapId?: MapId;
 }
 
 /**
@@ -95,10 +97,12 @@ export interface GameOptions {
 export class Game {
   readonly seed: number;
   readonly terrain: Terrain;
-  readonly surface: Int16Array;
+  readonly material: Uint8Array;
+  readonly map: MapInfo;
+  readonly gravity: number;
   readonly worldW = WORLD_W;
   readonly worldH = WORLD_H;
-  readonly mapId: string;
+  readonly mapId: MapId;
   readonly players: Player[];
   projectiles: LiveProjectile[] = [];
   phase: Phase = 'turnStart';
@@ -121,9 +125,11 @@ export class Game {
     this.seed = opts.seed;
     this.mapId = opts.mapId ?? 'herb_forest';
     this.rng = new Rng(opts.seed);
-    const map = generateMap(opts.seed ^ 0x5eed, opts.players.length);
+    const map = generateMap(opts.seed ^ 0x5eed, opts.players.length, this.mapId);
     this.terrain = map.terrain;
-    this.surface = map.surface;
+    this.material = map.material;
+    this.map = map.info;
+    this.gravity = GRAVITY * map.info.gravityScale;
     this.players = opts.players.map((s, i) => {
       const x = map.spawnXs[i];
       const y = Math.max(0, this.terrain.surfaceBelow(x, 0));
@@ -255,10 +261,11 @@ export class Game {
 
     // 모든 캐릭터 중력 (폭발로 지형이 바뀐 같은 틱 안에 반영)
     for (const p of this.players) {
-      if (!p.alive && p.deathCause === 'fall') continue;
-      const landed = stepGravity(p, this.terrain);
+      if (!p.alive && (p.deathCause === 'fall' || p.deathCause === 'liquid')) continue;
+      const landed = stepGravity(p, this.terrain, this.gravity);
       if (landed && p.alive) this.events.push({ type: 'land', player: p.id });
-      if (p.y > this.worldH + 40 && p.alive) this.kill(p, 'fall');
+      if (this.map.liquidY !== null && p.y > this.map.liquidY + 6 && p.alive) this.kill(p, 'liquid');
+      else if (p.y > this.worldH + 40 && p.alive) this.kill(p, 'fall');
     }
 
   }
@@ -294,7 +301,12 @@ export class Game {
     this.projectiles = this.projectiles.filter((pr) => {
       pr.prevX = pr.x;
       pr.prevY = pr.y;
-      const hit = stepProjectile(pr, this.wind * (WEAPONS[pr.weapon].windFactor ?? 1), this.terrain, bodies, this.worldW, this.worldH);
+      const hit = stepProjectile(pr, this.wind * (WEAPONS[pr.weapon].windFactor ?? 1), this.terrain, bodies, this.worldW, this.worldH, this.gravity);
+      // 물/용암에 빠짐
+      if (!hit && this.map.liquidY !== null && pr.y >= this.map.liquidY && pr.vy > 0) {
+        this.events.push({ type: 'splash', x: pr.x, y: this.map.liquidY, weapon: pr.weapon });
+        return false;
+      }
       if (!hit) {
         if (pr.age > PROJECTILE_MAX_TICKS) {
           this.events.push({ type: 'projectileOut', x: pr.x, y: pr.y });
@@ -354,11 +366,11 @@ export class Game {
     }
   }
 
-  private kill(p: Player, cause: 'hp' | 'fall') {
+  private kill(p: Player, cause: 'hp' | 'fall' | 'liquid') {
     if (!p.alive) return;
     p.alive = false;
     p.deathCause = cause;
-    if (cause === 'fall') p.hp = 0;
+    if (cause !== 'hp') p.hp = 0;
     this.events.push({ type: 'death', player: p.id, cause });
   }
 
@@ -396,7 +408,9 @@ export class Game {
     this.turnTicksLeft = TURN_TICKS;
     this.shotFiredThisTurn = false;
     this.input = { move: 0, aim: 0 };
-    this.wind = this.rng.int(-WIND_MAX, WIND_MAX);
+    // 맵의 바람 배율 적용 (달: 0 = 무풍)
+    const rawWind = this.rng.int(-WIND_MAX, WIND_MAX);
+    this.wind = Math.max(-WIND_MAX, Math.min(WIND_MAX, Math.round(rawWind * this.map.windScale))) || 0; // -0 방지
     this.setPhase('turnStart');
     this.events.push({ type: 'turnStart', player: idx, wind: this.wind, round: this.round });
   }

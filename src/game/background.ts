@@ -28,11 +28,16 @@ function fbm(rng: Rng, n: number, octaves = 4): number[] {
   return out.map((v) => v / total);
 }
 
-export function skyCanvas(w: number, h: number): HTMLCanvasElement {
+export function skyCanvas(w: number, h: number, theme: 'herb' | 'volcano' | 'sky' = 'herb'): HTMLCanvasElement {
   const c = makeCanvas(w, h);
   const ctx = c.getContext('2d')!;
   // 픽셀 밴딩 그라디언트 (디더 대신 계단식 밴드)
-  const stops = ['#3fa9d6', '#5cc3e0', '#86d9e2', '#b3ead7', '#dff5cf', '#fff2c4'];
+  const stops =
+    theme === 'volcano'
+      ? ['#140812', '#2a0c18', '#4a1220', '#7a1e1c', '#b23a1a', '#e8661e']
+      : theme === 'sky'
+        ? ['#3c9cff', '#5cb4ff', '#82caff', '#aadcff', '#d2eeff', '#f4fbff']
+        : ['#3fa9d6', '#5cc3e0', '#86d9e2', '#b3ead7', '#dff5cf', '#fff2c4'];
   const band = Math.ceil(h / stops.length);
   for (let i = 0; i < stops.length; i++) {
     ctx.fillStyle = stops[i];
@@ -43,6 +48,15 @@ export function skyCanvas(w: number, h: number): HTMLCanvasElement {
       for (let x = 0; x < w; x += 2) ctx.fillRect(x + ((i * band) % 2), (i + 1) * band - 2, 1, 1);
       for (let x = 1; x < w; x += 2) ctx.fillRect(x, (i + 1) * band - 1, 1, 1);
     }
+  }
+  if (theme === 'volcano') {
+    // 붉은 화산 빛 + 연기 띠
+    const g2 = ctx.createRadialGradient(w * 0.5, h, 0, w * 0.5, h, h * 0.9);
+    g2.addColorStop(0, 'rgba(255,140,40,0.55)');
+    g2.addColorStop(1, 'rgba(255,80,20,0)');
+    ctx.fillStyle = g2;
+    ctx.fillRect(0, 0, w, h);
+    return c;
   }
   // 태양
   const sx = w * 0.78,
@@ -191,4 +205,131 @@ export function buildForestLayers(viewW: number, viewH: number, worldW: number, 
     layers.push({ canvas: c, factor: d.f, y: camTop * fy });
   }
   return layers;
+}
+
+/** 화산 연구소 레이어 */
+export function buildVolcanoLayers(viewW: number, viewH: number, worldW: number, worldH: number, camTop: number, seed: number): BgLayer[] {
+  const rng = new Rng(seed);
+  const out: BgLayer[] = [];
+  const defs = [
+    { f: 0.12, base: 0.6, amp: 220, col: '#3a1220', glow: '#ff6a2a' },
+    { f: 0.3, base: 0.66, amp: 150, col: '#22080f', glow: '#ff9a3a' },
+  ];
+  defs.forEach((d, li) => {
+    const w = Math.ceil(viewW + (worldW - viewW) * d.f) + 4;
+    const fy = d.f * 0.6;
+    const h = Math.ceil(viewH + (worldH - viewH - camTop) * fy) + 4;
+    const c = makeCanvas(w, h);
+    const ctx = c.getContext('2d')!;
+    const hs = fbm(rng, w, 4).map((v, x) => {
+      // 뾰족한 화산 봉우리
+      const peak = Math.max(0, 1 - Math.abs(((x / w) * (li ? 5 : 3)) % 1 - 0.5) * 2.6);
+      return h * d.base - v * d.amp * 0.5 - peak * peak * d.amp;
+    });
+    silhouette(ctx, hs, d.col, h);
+    // 용암 흐름 (능선에서 흘러내림)
+    for (let i = 0; i < w / 160; i++) {
+      let x = Math.floor(rng.range(0, w));
+      let y = hs[x] + 2;
+      ctx.fillStyle = d.glow;
+      for (let k = 0; k < 60; k++) {
+        ctx.fillRect(x, y, 2, 2);
+        y += 2;
+        x += rng.int(-1, 1);
+        if (x < 0 || x >= w) break;
+      }
+    }
+    // 연구소 실루엣 (가까운 층)
+    if (li === 1) {
+      for (let i = 0; i < 5; i++) {
+        const x = Math.floor(rng.range(0, w - 60));
+        const bw = rng.int(30, 60),
+          bh = rng.int(40, 110);
+        const gy = Math.round(hs[x + (bw >> 1)]) + 6;
+        ctx.fillStyle = '#16060c';
+        ctx.fillRect(x, gy - bh, bw, bh);
+        ctx.fillRect(x + bw / 2 - 2, gy - bh - 20, 4, 20);
+        ctx.fillStyle = '#ffb03a';
+        for (let wy = gy - bh + 8; wy < gy - 8; wy += 10) for (let wx = x + 5; wx < x + bw - 5; wx += 9) if (rng.next() < 0.55) ctx.fillRect(wx, wy, 3, 4);
+      }
+    }
+    out.push({ canvas: c, factor: d.f, y: camTop * fy });
+  });
+  return out;
+}
+
+/** 하늘의 약국 레이어: 먼 구름 띠 + 떠 있는 섬 실루엣 */
+export function buildSkyLayers(viewW: number, viewH: number, worldW: number, worldH: number, camTop: number, seed: number): BgLayer[] {
+  const rng = new Rng(seed);
+  const out: BgLayer[] = [];
+  const defs = [
+    { f: 0.1, col: '#ffffff', alpha: 0.9 },
+    { f: 0.25, col: '#c8d8f0', alpha: 1 },
+  ];
+  defs.forEach((d, li) => {
+    const w = Math.ceil(viewW + (worldW - viewW) * d.f) + 4;
+    const fy = d.f * 0.6;
+    const h = Math.ceil(viewH + (worldH - viewH - camTop) * fy) + 4;
+    const c = makeCanvas(w, h);
+    const ctx = c.getContext('2d')!;
+    if (li === 0) {
+      // 아래쪽 두꺼운 구름 바다
+      const hs = fbm(rng, w, 4).map((v) => h * 0.7 - v * 80);
+      for (let x = 0; x < w; x++) {
+        for (let y = Math.round(hs[x]); y < h; y++) {
+          const k = Math.min(1, (y - hs[x]) / 30);
+          ctx.fillStyle = k < 0.15 ? '#ffffff' : k < 0.6 ? '#eef6ff' : '#dbe9fb';
+          ctx.fillRect(x, y, 1, 1);
+        }
+      }
+    } else {
+      // 떠 있는 섬 실루엣 + 약국 건물
+      for (let i = 0; i < w / 220; i++) {
+        const cx = rng.range(40, w - 40),
+          cy = rng.range(h * 0.25, h * 0.6),
+          hw = rng.range(26, 60);
+        for (let x = Math.floor(cx - hw); x <= cx + hw; x++) {
+          const u = (x - cx) / hw;
+          const e = 1 - u * u;
+          ctx.fillStyle = '#9fb8dc';
+          ctx.fillRect(x, Math.round(cy), 1, Math.round(4 + e * hw * 0.9));
+          ctx.fillStyle = '#b6e09a';
+          ctx.fillRect(x, Math.round(cy) - 1, 1, 3);
+        }
+        if (rng.next() < 0.5) {
+          ctx.fillStyle = '#e8f0ff';
+          ctx.fillRect(cx - 12, cy - 18, 24, 18);
+          ctx.fillStyle = '#4cd28a';
+          ctx.fillRect(cx - 2, cy - 30, 4, 10);
+          ctx.fillRect(cx - 5, cy - 27, 10, 4);
+        }
+      }
+    }
+    out.push({ canvas: c, factor: d.f, y: camTop * fy });
+  });
+  return out;
+}
+
+/** 빙결 설산: 이미지 배경 앞의 눈 덮인 침엽수 실루엣 */
+export function buildPineLayer(viewW: number, viewH: number, worldW: number, worldH: number, camTop: number, seed: number): BgLayer {
+  const rng = new Rng(seed);
+  const f = 0.32;
+  const w = Math.ceil(viewW + (worldW - viewW) * f) + 4;
+  const fy = f * 0.6;
+  const h = Math.ceil(viewH + (worldH - viewH - camTop) * fy) + 4;
+  const c = makeCanvas(w, h);
+  const ctx = c.getContext('2d')!;
+  const hs = fbm(rng, w, 3).map((v) => h * 0.74 - v * 70);
+  silhouette(ctx, hs, '#9fb6d8', h);
+  for (let i = 0; i < w / 18; i++) {
+    const x = Math.floor(rng.range(0, w));
+    const th = rng.range(24, 58);
+    const gy = hs[x] + 4;
+    for (let y = 0; y < th; y++) {
+      const hw = Math.round((1 - y / th) * th * 0.3) + 1;
+      ctx.fillStyle = y % 7 < 2 ? '#f2f8ff' : '#6f88ad';
+      ctx.fillRect(x - hw, Math.round(gy - y), hw * 2, 1);
+    }
+  }
+  return { canvas: c, factor: f, y: camTop * fy };
 }

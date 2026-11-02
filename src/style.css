@@ -972,3 +972,40 @@ body.is-touch .power {
 .result img.hero {
   image-rendering: pixelated;
 }
+
+.maps {
+  display: grid;
+  grid-template-columns: repeat(4, calc(var(--u) * 9.1));
+  gap: calc(var(--u) * 0.4);
+}
+.mapb {
+  border: none;
+  border-radius: calc(var(--u) * 0.6);
+  padding: calc(var(--u) * 0.35) calc(var(--u) * 0.4);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.mapb b {
+  font-size: calc(var(--u) * 0.95);
+  white-space: nowrap;
+}
+.mapb small {
+  font-size: calc(var(--u) * 0.68);
+  color: var(--dim);
+  white-space: nowrap;
+}
+.mapb.on {
+  background: rgba(155, 92, 255, 0.45);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.grid {
+  grid-template-columns: repeat(5, calc(var(--u) * 7.2));
+}
+.tile img {
+  height: calc(var(--u) * 6.2);
+}

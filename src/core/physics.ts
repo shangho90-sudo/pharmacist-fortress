@@ -73,7 +73,7 @@ export function launch(p: LaunchParams): Projectile {
  * 이동 경로 선분 전체를 0.5px 간격으로 검사해 지형/캐릭터 관통을 방지(연속 충돌 검사).
  * 원점이 이미 땅 속이면 즉시 그 자리에서 착탄한다.
  */
-export function stepProjectile(p: Projectile, wind: number, terrain: Terrain, bodies: Circle[], worldW: number, worldH: number): StepHit | null {
+export function stepProjectile(p: Projectile, wind: number, terrain: Terrain, bodies: Circle[], worldW: number, worldH: number, gravity = GRAVITY): StepHit | null {
   if (p.age === 0) {
     if (terrain.isSolid(p.x, p.y)) return { kind: 'terrain', x: p.x, y: p.y };
     for (const b of bodies) {
@@ -83,7 +83,7 @@ export function stepProjectile(p: Projectile, wind: number, terrain: Terrain, bo
     }
   }
   const ax = wind * WIND_ACCEL;
-  const ay = GRAVITY;
+  const ay = gravity;
   const nx = p.x + p.vx * DT + 0.5 * ax * DT * DT;
   const ny = p.y + p.vy * DT + 0.5 * ay * DT * DT;
   const x0 = p.x,
@@ -151,14 +151,14 @@ export function bodyCircle(m: Mover, id: number): Circle {
  * 중력/착지 처리. 1px 단위로 내려가며 땅을 만나면 정확히 그 위에 선다.
  * 반환: 이번 틱에 착지했는지
  */
-export function stepGravity(m: Mover, t: Terrain): boolean {
+export function stepGravity(m: Mover, t: Terrain, gravity = GRAVITY): boolean {
   if (m.grounded) {
     if (hasGround(t, m.x, m.y)) return false;
     // 발밑 지형이 사라짐 → 낙하 시작
     m.grounded = false;
     m.vy = 0;
   }
-  m.vy = Math.min(FALL_TERMINAL, m.vy + GRAVITY * DT);
+  m.vy = Math.min(FALL_TERMINAL, m.vy + gravity * DT);
   const target = m.y + m.vy * DT;
   // 지나가는 모든 정수 행을 검사 → 빠른 낙하에도 바닥을 뚫지 않음
   for (let r = Math.ceil(m.y); r <= Math.floor(target); r++) {

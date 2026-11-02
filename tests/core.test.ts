@@ -365,3 +365,67 @@ describe('캐릭터별 필살기', () => {
     expect(g.players[0].hp).toBeGreaterThan(50);
   });
 });
+
+describe('맵 6종', () => {
+  it('모든 맵이 결정론적으로 생성되고, 시작 위치가 액체 위의 땅이며 서로 떨어져 있다', async () => {
+    const { MAP_LIST, MAP_INFO } = await import('../src/core/mapgen');
+    for (const id of MAP_LIST) {
+      for (const n of [2, 4]) {
+        const a = generateMap(123, n, id);
+        const b = generateMap(123, n, id);
+        expect(a.terrain.checksum()).toBe(b.terrain.checksum());
+        expect(a.spawnXs).toEqual(b.spawnXs);
+        const ly = MAP_INFO[id].liquidY ?? WORLD_H;
+        for (const x of a.spawnXs) {
+          const s = a.terrain.surfaceBelow(x, 0);
+          expect(s, `${id} spawn ${x}`).toBeGreaterThan(100);
+          expect(s, `${id} spawn ${x}`).toBeLessThan(ly - 30);
+        }
+        for (let i = 1; i < a.spawnXs.length; i++) expect(a.spawnXs[i] - a.spawnXs[i - 1]).toBeGreaterThan(150);
+      }
+    }
+  });
+
+  it('모든 맵에서 AI 대전이 끝까지 진행되고 캐릭터가 땅에 박히거나 떠 있지 않다', async () => {
+    const { MAP_LIST } = await import('../src/core/mapgen');
+    for (const id of MAP_LIST) {
+      const g = new Game({ seed: 99, mapId: id, players: setup().map((p) => ({ ...p, aiLevel: 'hard' as const })) });
+      let guard = 0;
+      while (g.phase !== 'over' && guard++ < 120 * 60 * 30) {
+        if (g.phase === 'aiming') {
+          if (g.currentPlayer.gauge >= 100) g.currentPlayer.gauge = 99; // 속도를 위해 기본탄만
+          const plan = planShot(g, g.tick);
+          g.currentPlayer.facing = plan.facing;
+          g.currentPlayer.angle = plan.angle;
+          g.fire('basic', plan.power);
+        }
+        g.step();
+        g.events.length = 0;
+        for (const p of g.players) if (p.alive && p.grounded) expect(hasGround(g.terrain, p.x, p.y)).toBe(true);
+      }
+      expect(g.phase, id).toBe('over');
+    }
+  }, 120000);
+
+  it('달 기지는 바람이 항상 0이고 중력이 낮다', () => {
+    const g = new Game({ seed: 5, mapId: 'moon_base', players: setup() });
+    for (let i = 0; i < 20; i++) {
+      expect(g.wind).toBe(0);
+      g.skipTurn();
+      for (let k = 0; k < 400 && g.phase !== 'aiming'; k++) g.step();
+    }
+    expect(g.gravity).toBeLessThan(GRAVITY);
+  });
+
+  it('바다에 빠지면 탈락하고, 포탄은 수면에서 사라진다', () => {
+    const g = new Game({ seed: 8, mapId: 'pirate_cove', players: setup() });
+    const p = g.players[0];
+    p.x = Math.round(WORLD_W * 0.47); // 암초 사이 바다 위
+    p.y = 400;
+    p.grounded = false;
+    for (let i = 0; i < 600 && p.alive; i++) g.step();
+    expect(p.alive).toBe(false);
+    expect(p.deathCause).toBe('liquid');
+    expect(g.events.some((e) => e.type === 'death')).toBe(true);
+  });
+});

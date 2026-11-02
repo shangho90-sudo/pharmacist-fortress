@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { hash2 } from '../core/rng';
 import type { Rect, Terrain } from '../core/terrain';
+import { MAT, type MapId } from '../core/mapgen';
 
 const CHUNK = 256;
 
@@ -15,6 +16,31 @@ function mix(a: readonly number[], b: readonly number[], t: number) {
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 }
 
+interface Theme {
+  top: [string, string, string];
+  topDepth: number;
+  body: [string, string, string];
+  deep: [string, string];
+  stone: string;
+  stoneHi: string;
+  stoneDk: string;
+  stoneRate: number;
+  fleck: string;
+  fleckRate: number;
+  craters?: boolean;
+  veins?: boolean;
+  roots?: boolean;
+}
+
+const THEMES: Record<MapId, Theme> = {
+  herb_forest: { top: ['#b4ef6a', '#6cc24a', '#3f8f3a'], topDepth: 9, body: ['#8a5a3b', '#6e4630', '#9c6b45'], deep: ['#5d4e5c', '#463a4a'], stone: '#9a96a8', stoneHi: '#c9c6d6', stoneDk: '#5f5b70', stoneRate: 0.16, fleck: '#6fffd2', fleckRate: 0.0025, roots: true },
+  ice_peaks: { top: ['#ffffff', '#e2f2ff', '#b8d8f2'], topDepth: 12, body: ['#5a6a8c', '#4a5878', '#6d7ea0'], deep: ['#3a4462', '#2e3652'], stone: '#8ea0c4', stoneHi: '#d8e6ff', stoneDk: '#3a4868', stoneRate: 0.14, fleck: '#bff4ff', fleckRate: 0.006 },
+  moon_base: { top: ['#e2e2ea', '#c4c4d0', '#a8a8b8'], topDepth: 7, body: ['#a0a0ae', '#8c8c9c', '#b2b2c0'], deep: ['#6c6c80', '#5a5a70'], stone: '#9090a4', stoneHi: '#d4d4e2', stoneDk: '#4a4a5e', stoneRate: 0.22, fleck: '#7ad8ff', fleckRate: 0.0015, craters: true },
+  pirate_cove: { top: ['#8fd45a', '#5aa83e', '#3a7a34'], topDepth: 7, body: ['#5a6470', '#4a5460', '#6a7480'], deep: ['#3c4450', '#323a46'], stone: '#7a8490', stoneHi: '#b8c0cc', stoneDk: '#2e343e', stoneRate: 0.2, fleck: '#e8d08a', fleckRate: 0.004 },
+  volcano_lab: { top: ['#9a8a86', '#6e5e5c', '#4a3a3c'], topDepth: 8, body: ['#3a2c30', '#33272b', '#403034'], deep: ['#241a1e', '#1c1418'], stone: '#5a4a4e', stoneHi: '#8a7476', stoneDk: '#1a1214', stoneRate: 0.12, fleck: '#ffb03a', fleckRate: 0.001, veins: true },
+  sky_pharmacy: { top: ['#c4ff8a', '#7ee05a', '#4ab048'], topDepth: 9, body: ['#c8a070', '#b08a5a', '#d6b080'], deep: ['#e8e4f4', '#d0cce4'], stone: '#e0d0b8', stoneHi: '#fff4e0', stoneDk: '#9a8060', stoneRate: 0.1, fleck: '#ffffff', fleckRate: 0.004 },
+};
+
 /**
  * 지형 렌더러. 물리 마스크(Terrain.mask)를 그대로 읽어 그리므로 화면과 충돌 판정이 항상 일치한다.
  * 맵을 256px 청크로 나눠, 폭발로 바뀐 청크만 다시 그리고 GPU에 업로드한다.
@@ -27,11 +53,11 @@ export class TerrainView {
   private walls: { tex: Phaser.Textures.CanvasTexture; img: Phaser.GameObjects.Image }[] = [];
   readonly terrain: Terrain;
 
-  constructor(scene: Phaser.Scene, terrain: Terrain, surface: Int16Array, seed: number, depth = 0) {
+  constructor(scene: Phaser.Scene, terrain: Terrain, material: Uint8Array, mapId: MapId, seed: number, depth = 0) {
     this.terrain = terrain;
     this.base = new Uint32Array(terrain.w * terrain.h);
     this.scorch = new Uint8Array(terrain.w * terrain.h);
-    this.buildBase(surface, seed);
+    this.buildBase(material, THEMES[mapId] ?? THEMES.herb_forest, seed);
     this.cols = Math.ceil(terrain.w / CHUNK);
     const rows = Math.ceil(terrain.h / CHUNK);
     for (let cy = 0; cy < rows; cy++) {
@@ -97,21 +123,18 @@ export class TerrainView {
     return ((c & 255) << 16) | (((c >> 8) & 255) << 8) | ((c >> 16) & 255);
   }
 
-  private buildBase(_surface: Int16Array, seed: number) {
+  private buildBase(material: Uint8Array, th: Theme, seed: number) {
     const { w, h, mask } = this.terrain;
-    const grassHi = hex('#b4ef6a'),
-      grass = hex('#6cc24a'),
-      grassDk = hex('#3f8f3a');
-    const soilA = hex('#8a5a3b'),
-      soilB = hex('#6e4630'),
-      soilC = hex('#9c6b45');
-    const rockA = hex('#5d4e5c'),
-      rockB = hex('#463a4a');
-    const stone = hex('#9a96a8'),
-      stoneHi = hex('#c9c6d6'),
-      stoneDk = hex('#5f5b70');
-    const crystal = hex('#6fffd2');
-    const root = hex('#5a3a22');
+    const T = th.top.map(hex);
+    const body = th.body.map(hex);
+    const deep = th.deep.map(hex);
+    const stone = hex(th.stone),
+      stoneHi = hex(th.stoneHi),
+      stoneDk = hex(th.stoneDk);
+    const fleck = hex(th.fleck);
+    const wood = [hex('#9a6a38'), hex('#7a4e26'), hex('#5a361a')];
+    const metal = [hex('#9aa6ba'), hex('#6a7690'), hex('#3a445a'), hex('#5ec8ff')];
+    const ice = [hex('#e6f8ff'), hex('#a8e4ff'), hex('#6ac0ef')];
     for (let x = 0; x < w; x++) {
       let depth = 0;
       for (let y = 0; y < h; y++) {
@@ -120,39 +143,64 @@ export class TerrainView {
           depth = 0;
           continue;
         }
-        const n = hash2(x >> 2, y >> 2, seed); // 4px 블록 노이즈(픽셀아트 질감)
+        const n = hash2(x >> 2, y >> 2, seed);
         const n2 = hash2(x, y, seed + 7);
-        const grassDepth = 8 + Math.floor(hash2(x >> 1, 0, seed + 3) * 5);
+        const m = material[i];
         let c: number[];
-        if (depth < 2) c = [...grassHi];
-        else if (depth < 5) c = [...grass];
-        else if (depth < grassDepth) c = mix(grass, grassDk, (depth - 5) / (grassDepth - 5));
-        else {
-          const deep = Math.min(1, Math.max(0, (depth - 160) / 120));
-          const s = n < 0.33 ? soilA : n < 0.66 ? soilB : soilC;
-          c = mix(s, n < 0.5 ? rockA : rockB, deep);
-          // 지층 띠
-          if (((y + Math.floor(hash2(x >> 4, 1, seed) * 6)) % 46) < 2) c = mix(c, [40, 26, 30], 0.35);
-          // 돌
-          const gx = Math.floor(x / 14),
-            gy = Math.floor(y / 14);
-          const sh = hash2(gx, gy, seed + 11);
-          if (sh < 0.16 && depth > 14) {
-            const scx = gx * 14 + 7 + (hash2(gx, gy, seed + 12) - 0.5) * 6;
-            const scy = gy * 14 + 7 + (hash2(gx, gy, seed + 13) - 0.5) * 6;
-            const rr = 2.5 + sh * 18;
-            const dx = x - scx,
-              dy = y - scy;
-            const d2 = (dx * dx) / (rr * rr) + (dy * dy) / (rr * rr * 0.55);
-            if (d2 < 1) c = d2 < 0.35 && dx < 0 && dy < 0 ? [...stoneHi] : dy > rr * 0.3 ? [...stoneDk] : [...stone];
+        if (m === MAT.wood) {
+          // 나무 판자: 가로 판자 + 이음새 + 못
+          const plank = Math.floor(y / 5);
+          const seam = (x + plank * 13) % 24 === 0;
+          c = y % 5 === 0 || seam ? [...wood[2]] : (plank % 2 ? [...wood[0]] : [...wood[1]]);
+          if ((x + plank * 13) % 24 === 2 && y % 5 === 2) c = [200, 200, 210];
+        } else if (m === MAT.metal) {
+          // 금속 거더: 테두리 + 리벳 + 파란 표시등
+          const ey = y % 6;
+          c = ey === 0 || ey === 5 ? [...metal[2]] : ey === 1 ? [...metal[0]] : [...metal[1]];
+          if (x % 14 === 3 && ey === 3) c = [210, 220, 235];
+          if (x % 56 === 10 && ey === 2) c = [...metal[3]];
+        } else if (m === MAT.ice) {
+          c = depth < 2 ? [...ice[0]] : n < 0.5 ? [...ice[1]] : [...ice[2]];
+          if (n2 < 0.06) c = [255, 255, 255];
+        } else {
+          const topDepth = th.topDepth + Math.floor(hash2(x >> 1, 0, seed + 3) * 4);
+          if (depth < 2) c = [...T[0]];
+          else if (depth < 5) c = [...T[1]];
+          else if (depth < topDepth) c = mix(T[1], T[2], (depth - 5) / Math.max(1, topDepth - 5));
+          else {
+            const d = Math.min(1, Math.max(0, (depth - 140) / 140));
+            const bc = n < 0.33 ? body[0] : n < 0.66 ? body[1] : body[2];
+            c = mix(bc, n < 0.5 ? deep[0] : deep[1], d);
+            if (((y + Math.floor(hash2(x >> 4, 1, seed) * 6)) % 46) < 2) c = mix(c, [20, 14, 24], 0.3);
+            // 돌/크레이터
+            const gx = Math.floor(x / 14),
+              gy = Math.floor(y / 14);
+            const sh = hash2(gx, gy, seed + 11);
+            if (sh < th.stoneRate && depth > 12) {
+              const scx = gx * 14 + 7 + (hash2(gx, gy, seed + 12) - 0.5) * 6;
+              const scy = gy * 14 + 7 + (hash2(gx, gy, seed + 13) - 0.5) * 6;
+              const rr = 2.5 + sh * 20;
+              const dx = x - scx,
+                dy = y - scy;
+              const d2 = (dx * dx) / (rr * rr) + (dy * dy) / (rr * rr * 0.6);
+              if (d2 < 1) {
+                if (th.craters) c = d2 > 0.6 ? (dy < 0 ? [...stoneDk] : [...stoneHi]) : mix(c, [...stoneDk], 0.35);
+                else c = d2 < 0.35 && dx < 0 && dy < 0 ? [...stoneHi] : dy > rr * 0.3 ? [...stoneDk] : [...stone];
+              }
+            }
+            // 테마 특수 무늬
+            if (th.veins) {
+              // 사선으로 이어지는 가는 용암 균열
+              const band = (x * 3 + y * 5 + Math.floor(hash2(x >> 5, y >> 5, seed + 31) * 400)) % 97;
+              const crack = band < 2 && hash2(x >> 4, y >> 4, seed + 32) < 0.35;
+              if (crack && depth > 10) c = mix([255, 110, 30], [255, 210, 90], hash2(x >> 1, y >> 1, seed));
+              else if (band < 4 && hash2(x >> 4, y >> 4, seed + 32) < 0.35 && depth > 10) c = mix(c, [150, 40, 20], 0.5);
+            }
+            if (th.roots && depth > topDepth && depth < 60 && hash2(x >> 1, (y + (x >> 3)) >> 3, seed + 21) < 0.04) c = [90, 58, 34];
+            if (depth > 50 && n2 < th.fleckRate) c = [...fleck];
+            const v = (n2 - 0.5) * 10;
+            c = [c[0] + v, c[1] + v, c[2] + v];
           }
-          // 약초 뿌리 (표면 근처)
-          if (depth > grassDepth && depth < 60 && hash2(x >> 1, (y + (x >> 3)) >> 3, seed + 21) < 0.04) c = [...root];
-          // 결정(광물)
-          if (depth > 60 && n2 < 0.0025) c = [...crystal];
-          // 미세 노이즈
-          const v = (n2 - 0.5) * 10;
-          c = [c[0] + v, c[1] + v, c[2] + v];
         }
         this.base[i] = rgba(c[0], c[1], c[2]);
         depth++;

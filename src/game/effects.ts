@@ -193,6 +193,30 @@ export class Effects {
     this.scene.tweens.add({ targets: t, y: y - 26, alpha: 0, delay: 1100, duration: 500, onComplete: () => t.destroy() });
   }
 
+  splash(x: number, y: number, lava: boolean) {
+    this.burst(
+      x,
+      y,
+      'fx_px',
+      { speed: { min: 80, max: 260 }, angle: { min: 235, max: 305 }, lifespan: { min: 500, max: 1000 }, scale: { min: 1, max: 2.5 }, gravityY: 600, tint: lava ? [0xffe08a, 0xff7a1a, 0xff3a0a] : [0xffffff, 0xc8f0ff, 0x6cc4f0], blendMode: lava ? 'ADD' : 'NORMAL' },
+      28,
+      1200,
+    );
+    const ring = this.scene.add.graphics().setDepth(D_FX);
+    const st = { t: 0 };
+    this.scene.tweens.add({
+      targets: st,
+      t: 1,
+      duration: 600,
+      onUpdate: () => {
+        ring.clear();
+        ring.lineStyle(2, lava ? 0xffc060 : 0xffffff, 0.8 * (1 - st.t));
+        ring.strokeEllipse(x, y, 20 + 70 * st.t, 6 + 10 * st.t);
+      },
+      onComplete: () => ring.destroy(),
+    });
+  }
+
   dust(x: number, y: number) {
     this.burst(x, y, 'fx_smoke', { speed: { min: 10, max: 40 }, angle: { min: 180, max: 360 }, lifespan: 500, scale: { start: 0.12, end: 0.3 }, alpha: { start: 0.5, end: 0 }, tint: 0xc8b8a0 }, 6, 700);
   }

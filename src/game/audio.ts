@@ -169,6 +169,15 @@ class AudioEngine {
   charge(p: number) {
     this.tone(300 + p * 9, 300 + p * 9, 0.04, 0.05, 'square');
   }
+  splash(lava: boolean) {
+    if (lava) {
+      this.noise(0.6, 900, 120, 0.5);
+      this.tone(90, 40, 0.5, 0.4, 'sawtooth');
+    } else {
+      this.noise(0.5, 3000, 400, 0.5, 'bandpass');
+      this.tone(600, 200, 0.2, 0.15, 'sine', 0.05);
+    }
+  }
   land() {
     this.noise(0.12, 800, 200, 0.25);
   }

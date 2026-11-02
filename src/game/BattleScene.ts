@@ -5,9 +5,10 @@ import { DT, MAX_GAUGE, MUZZLE_HEIGHT, MUZZLE_LENGTH, TICK_RATE } from '../core/
 import { Game, type GameEvent, type Player, type PlayerSetup } from '../core/game';
 import { cosDeg, sinDeg } from '../core/physics';
 import { WEAPONS, type WeaponId } from '../core/weapons';
+import { MAP_INFO, MAP_LIST, type MapId } from '../core/mapgen';
 import { CHAR_SCALE, drawGun, drawProjectile, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
 import { audio } from './audio';
-import { buildForestLayers, cloudsCanvas, skyCanvas } from './background';
+import { buildForestLayers, buildPineLayer, buildSkyLayers, buildVolcanoLayers, cloudsCanvas, skyCanvas } from './background';
 import { Effects } from './effects';
 import { TerrainView } from './terrainView';
 
@@ -19,6 +20,7 @@ const CHARGE_TIME = 2.0; // 파워 0→100 (초)
 
 export interface BattleConfig {
   seed: number;
+  mapId?: MapId;
   players: PlayerSetup[];
   demo?: boolean;
 }
@@ -93,6 +95,10 @@ export class BattleScene extends Phaser.Scene {
 
   preload() {
     for (const id of CHAR_LIST) this.load.image(`char_${id}`, `chars/${id}.png`);
+    for (const id of MAP_LIST) {
+      const bd = MAP_INFO[id].backdrop;
+      if (bd) this.load.image(`bg_${bd}`, `bg/${bd}.jpg`);
+    }
   }
 
   create() {
@@ -143,10 +149,10 @@ export class BattleScene extends Phaser.Scene {
     this.cfg = cfg;
     this.hooks = hooks;
     this.silent = !!cfg.demo;
-    this.game2 = new Game({ seed: cfg.seed, players: cfg.players });
+    this.game2 = new Game({ seed: cfg.seed, players: cfg.players, mapId: cfg.mapId });
     const g = this.game2;
     this.buildBackground(cfg.seed);
-    this.terrainView = new TerrainView(this, g.terrain, g.surface, cfg.seed, 0);
+    this.terrainView = new TerrainView(this, g.terrain, g.material, g.mapId, cfg.seed, 0);
     this.views = g.players.map((p) => this.makeCharView(p));
     this.acc = 0;
     this.charge = 0;
@@ -184,57 +190,132 @@ export class BattleScene extends Phaser.Scene {
     this.terrainView = null;
     this.ambient?.destroy();
     this.ambient = null;
+    this.liquidTiles = [];
     audio.whistleStop();
   }
 
   private buildBackground(seed: number) {
     const g = this.game2;
-    const skyKey = 'bg_sky';
-    if (!this.textures.exists(skyKey)) this.textures.addCanvas(skyKey, skyCanvas(VIEW_W, VIEW_H));
-    const sky = this.add.image(0, 0, skyKey).setOrigin(0).setDepth(-100);
-    this.bgImages.push({ img: sky, factor: 0, y: 0, kind: 'sky' });
-    const cloudKey = `bg_cloud_${seed}`;
-    if (!this.textures.exists(cloudKey)) this.textures.addCanvas(cloudKey, cloudsCanvas(1024, 200, seed));
-    const cl = this.add.tileSprite(0, 0, VIEW_W, 200, cloudKey).setOrigin(0).setDepth(-95).setAlpha(0.9);
-    this.bgImages.push({ img: cl, factor: 0.05, y: 30, kind: 'cloud' });
-    const layers = buildForestLayers(VIEW_W, VIEW_H, g.worldW, g.worldH, CAM_TOP, seed);
-    layers.forEach((l, i) => {
-      const key = `bg_layer_${seed}_${i}`;
+    const info = g.map;
+    const theme = info.id === 'volcano_lab' ? 'volcano' : info.id === 'sky_pharmacy' ? 'sky' : 'herb';
+    const addLayer = (l: { canvas: HTMLCanvasElement; factor: number; y: number }, key: string, depth: number) => {
       if (!this.textures.exists(key)) this.textures.addCanvas(key, l.canvas);
-      const img = this.add.image(0, 0, key).setOrigin(0).setDepth(-90 + i);
+      const img = this.add.image(0, 0, key).setOrigin(0).setDepth(depth);
       this.bgImages.push({ img, factor: l.factor, y: l.y, kind: 'layer' });
-    });
-    for (const b of this.bgImages) this.worldObjs.push(b.img);
-    // 맵 하단 심연 그라디언트
-    const abyssKey = 'bg_abyss';
-    if (!this.textures.exists(abyssKey)) {
-      const c = document.createElement('canvas');
-      c.width = 4;
-      c.height = 120;
-      const ctx = c.getContext('2d')!;
-      const gr = ctx.createLinearGradient(0, 0, 0, 120);
-      gr.addColorStop(0, 'rgba(20,10,30,0)');
-      gr.addColorStop(1, 'rgba(20,10,30,0.95)');
-      ctx.fillStyle = gr;
-      ctx.fillRect(0, 0, 4, 120);
-      this.textures.addCanvas(abyssKey, c);
+    };
+    if (info.backdrop) {
+      // 레퍼런스 일러스트 배경 (먼 층)
+      const f = 0.12;
+      const w = VIEW_W + (g.worldW - VIEW_W) * f + 4;
+      const fy = f * 0.6;
+      const h = VIEW_H + (g.worldH - VIEW_H - CAM_TOP) * fy + 4;
+      const src = this.textures.get(`bg_${info.backdrop}`).getSourceImage() as HTMLImageElement;
+      const sc = Math.max(w / src.width, h / src.height);
+      const img = this.add.image(0, 0, `bg_${info.backdrop}`).setOrigin(0).setDepth(-100).setScale(sc);
+      this.bgImages.push({ img, factor: f, y: CAM_TOP * fy, kind: 'layer' });
+      if (info.id === 'ice_peaks') addLayer(buildPineLayer(VIEW_W, VIEW_H, g.worldW, g.worldH, CAM_TOP, seed), `bg_pine_${seed}`, -90);
+    } else {
+      const skyKey = `bg_sky_${theme}`;
+      if (!this.textures.exists(skyKey)) this.textures.addCanvas(skyKey, skyCanvas(VIEW_W, VIEW_H, theme));
+      const sky = this.add.image(0, 0, skyKey).setOrigin(0).setDepth(-100);
+      this.bgImages.push({ img: sky, factor: 0, y: 0, kind: 'sky' });
+      if (theme !== 'volcano') {
+        const cloudKey = `bg_cloud_${seed}`;
+        if (!this.textures.exists(cloudKey)) this.textures.addCanvas(cloudKey, cloudsCanvas(1024, 200, seed));
+        const cl = this.add.tileSprite(0, 0, VIEW_W, 200, cloudKey).setOrigin(0).setDepth(-95).setAlpha(0.9);
+        this.bgImages.push({ img: cl, factor: 0.05, y: 30, kind: 'cloud' });
+      }
+      const layers =
+        theme === 'volcano'
+          ? buildVolcanoLayers(VIEW_W, VIEW_H, g.worldW, g.worldH, CAM_TOP, seed)
+          : theme === 'sky'
+            ? buildSkyLayers(VIEW_W, VIEW_H, g.worldW, g.worldH, CAM_TOP, seed)
+            : buildForestLayers(VIEW_W, VIEW_H, g.worldW, g.worldH, CAM_TOP, seed);
+      layers.forEach((l, i) => addLayer(l, `bg_layer_${info.id}_${seed}_${i}`, -90 + i));
     }
-    const ab = this.add.image(0, g.worldH - 120, abyssKey).setOrigin(0).setDisplaySize(g.worldW, 120).setDepth(-5);
-    this.worldObjs.push(ab);
-    // 떠다니는 포자 (분위기)
+    for (const b of this.bgImages) this.worldObjs.push(b.img);
+    // 맵 하단: 액체(물/용암) 또는 심연 그라디언트
+    if (info.liquidY !== null && info.liquid) this.buildLiquid(info.liquidY, info.liquid);
+    else {
+      const abyssKey = 'bg_abyss';
+      if (!this.textures.exists(abyssKey)) {
+        const c = document.createElement('canvas');
+        c.width = 4;
+        c.height = 120;
+        const ctx = c.getContext('2d')!;
+        const gr = ctx.createLinearGradient(0, 0, 0, 120);
+        gr.addColorStop(0, 'rgba(20,10,30,0)');
+        gr.addColorStop(1, 'rgba(20,10,30,0.95)');
+        ctx.fillStyle = gr;
+        ctx.fillRect(0, 0, 4, 120);
+        this.textures.addCanvas(abyssKey, c);
+      }
+      const ab = this.add.image(0, g.worldH - 120, abyssKey).setOrigin(0).setDisplaySize(g.worldW, 120).setDepth(-5);
+      this.worldObjs.push(ab);
+    }
+    // 분위기 파티클
+    const amb: Record<string, Phaser.Types.GameObjects.Particles.ParticleEmitterConfig> = {
+      herb: { speedX: { min: -8, max: 8 }, speedY: { min: -14, max: -4 }, tint: [0xe8ffb0, 0xb0ffd8, 0xfff2a0], blendMode: 'ADD', scale: { min: 0.3, max: 0.8 } },
+      snow: { speedX: { min: -20, max: 10 }, speedY: { min: 18, max: 45 }, tint: [0xffffff, 0xe6f4ff], scale: { min: 0.35, max: 0.9 } },
+      dust: { speedX: { min: -4, max: 4 }, speedY: { min: -4, max: 4 }, tint: [0x9fd8ff, 0xffffff], blendMode: 'ADD', scale: { min: 0.2, max: 0.5 } },
+      ember: { speedX: { min: -10, max: 10 }, speedY: { min: -40, max: -12 }, tint: [0xffb03a, 0xff6a1a, 0xffe08a], blendMode: 'ADD', scale: { min: 0.25, max: 0.7 } },
+      sea: { speedX: { min: -6, max: 6 }, speedY: { min: -8, max: -2 }, tint: [0xffffff, 0xc8f0ff], blendMode: 'ADD', scale: { min: 0.2, max: 0.5 } },
+    };
+    const kind = { herb_forest: 'herb', ice_peaks: 'snow', moon_base: 'dust', pirate_cove: 'sea', volcano_lab: 'ember', sky_pharmacy: 'herb' }[info.id];
     this.ambient = this.add.particles(0, 0, 'fx_dot', {
       x: { min: 0, max: g.worldW },
-      y: { min: -200, max: g.worldH - 200 },
+      y: { min: -300, max: g.worldH - 200 },
       lifespan: 6000,
-      speedX: { min: -8, max: 8 },
-      speedY: { min: -14, max: -4 },
-      scale: { min: 0.3, max: 0.8 },
-      alpha: { start: 0, end: 0, ease: (t: number) => Math.sin(t * Math.PI) * 0.8 } as any,
-      tint: [0xe8ffb0, 0xb0ffd8, 0xfff2a0],
-      blendMode: 'ADD',
-      frequency: 60,
+      alpha: { start: 0, end: 0, ease: (t: number) => Math.sin(t * Math.PI) * 0.85 } as any,
+      frequency: kind === 'snow' ? 18 : 60,
+      ...amb[kind],
     });
-    this.ambient.setDepth(-3);
+    this.ambient.setDepth(kind === 'snow' ? 30 : -3);
+  }
+
+  private liquidTiles: Phaser.GameObjects.TileSprite[] = [];
+
+  /** 물/용암: 맵 전체 폭의 반투명 띠 + 출렁이는 수면 */
+  private buildLiquid(ly: number, kind: 'water' | 'ice_water' | 'lava') {
+    const g = this.game2;
+    const h = g.worldH - ly + 40;
+    const key = `liq_${kind}_${h}`;
+    const pal =
+      kind === 'lava'
+        ? { top: '#ffe08a', mid: '#ff7a1a', deep: '#8a1a0a', alpha: 0.96 }
+        : kind === 'ice_water'
+          ? { top: '#e8f8ff', mid: '#6cc4f0', deep: '#1e5a9a', alpha: 0.86 }
+          : { top: '#e6fbff', mid: '#22a6dc', deep: '#0a3f86', alpha: 0.86 };
+    if (!this.textures.exists(key)) {
+      const c = makeCanvas(256, h);
+      const ctx = c.getContext('2d')!;
+      const gr = ctx.createLinearGradient(0, 0, 0, h);
+      gr.addColorStop(0, pal.mid);
+      gr.addColorStop(1, pal.deep);
+      ctx.fillStyle = gr;
+      ctx.fillRect(0, 4, 256, h);
+      // 수면 물결 (타일 반복 가능한 주기)
+      for (let x = 0; x < 256; x++) {
+        const wv = Math.round(Math.sin((x / 256) * Math.PI * 8) * 1.5 + Math.sin((x / 256) * Math.PI * 2) * 1);
+        ctx.fillStyle = pal.top;
+        ctx.fillRect(x, 2 + wv, 1, 2);
+        ctx.fillStyle = pal.mid;
+        ctx.fillRect(x, 4 + wv, 1, 3);
+      }
+      // 반짝임/거품
+      ctx.fillStyle = kind === 'lava' ? 'rgba(255,230,140,0.8)' : 'rgba(255,255,255,0.55)';
+      for (let i = 0; i < 60; i++) {
+        const x = (i * 97) % 256,
+          y = 10 + ((i * 53) % Math.max(10, h - 20));
+        ctx.fillRect(x, y, 3 + (i % 4), 1);
+      }
+      this.textures.addCanvas(key, c);
+    }
+    const t1 = this.add.tileSprite(0, ly - 4, g.worldW, h, key).setOrigin(0).setDepth(6).setAlpha(pal.alpha);
+    const t2 = this.add.tileSprite(0, ly - 2, g.worldW, h, key).setOrigin(0).setDepth(6).setAlpha(0.35);
+    if (kind === 'lava') t2.setBlendMode(Phaser.BlendModes.ADD);
+    this.liquidTiles = [t1, t2];
+    this.worldObjs.push(t1, t2);
   }
 
   private makeCharView(p: Player): CharView {
@@ -535,11 +616,21 @@ export class BattleScene extends Phaser.Scene {
       }
       case 'death': {
         const p = g.players[e.player];
-        this.fx.bigText(p.x, p.y - 80, e.cause === 'fall' ? '추락!' : 'K.O.!', '#ff6b6b');
+        this.fx.bigText(p.x, Math.min(p.y, g.map.liquidY ?? p.y) - 80, e.cause === 'fall' ? '추락!' : e.cause === 'liquid' ? (g.map.liquid === 'lava' ? '용암 낙하!' : '풍덩!') : 'K.O.!', '#ff6b6b');
+        if (e.cause === 'liquid') this.fx.splash(p.x, g.map.liquidY!, g.map.liquid === 'lava');
         break;
       }
       case 'projectileOut':
         break;
+      case 'splash': {
+        const lava = g.map.liquid === 'lava';
+        this.fx.splash(e.x, e.y, lava);
+        if (sfx) audio.splash(lava);
+        this.camMode = 'point';
+        this.camPoint = { x: e.x, y: e.y - 40 };
+        this.camHold = 0.5;
+        break;
+      }
       case 'land':
         this.fx.dust(g.players[e.player].x, g.players[e.player].y);
         if (sfx) audio.land();
@@ -587,9 +678,9 @@ export class BattleScene extends Phaser.Scene {
     const t = this.time.now / 1000;
     g.players.forEach((p, i) => {
       const v = this.views[i];
-      const fell = !p.alive && p.deathCause === 'fall';
+      const fell = !p.alive && (p.deathCause === 'fall' || p.deathCause === 'liquid');
       if (fell) {
-        v.body.setVisible(p.y < g.worldH + 80);
+        v.body.setVisible(p.y < (g.map.liquidY !== null ? g.map.liquidY + 30 : g.worldH + 80));
         v.gun.setVisible(false);
       }
       v.hitTimer = Math.max(0, v.hitTimer - dt);
@@ -697,6 +788,10 @@ export class BattleScene extends Phaser.Scene {
   /** 카메라 이동 후 같은 프레임에 배경 위치 갱신 (지연/떨림 방지) */
   private updateParallax() {
     const t = this.time.now / 1000;
+    if (this.liquidTiles.length) {
+      this.liquidTiles[0].tilePositionX = t * 14;
+      this.liquidTiles[1].tilePositionX = -t * 22 + 80;
+    }
     const vx = this.camX - VIEW_W / 2,
       vy = this.camY - VIEW_H / 2;
     for (const b of this.bgImages) {

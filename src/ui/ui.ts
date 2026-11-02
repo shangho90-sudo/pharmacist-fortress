@@ -1,7 +1,7 @@
 import { CHAR_LIST, CHAR_TYPES, type CharTypeId } from '../core/characters';
 import { MAX_GAUGE, MOVE_PER_TURN, TICK_RATE, WIND_MAX } from '../core/constants';
 import type { AiLevel, Game, GameEvent, PlayerSetup } from '../core/game';
-import { MAPS } from '../core/mapgen';
+import { MAP_INFO, MAP_LIST, type MapId } from '../core/mapgen';
 import { audio } from '../game/audio';
 import type { BattleScene } from '../game/BattleScene';
 
@@ -21,7 +21,7 @@ interface MatchSetup {
   p1: CharTypeId;
   p2: CharTypeId;
   level: AiLevel;
-  map: string;
+  map: MapId | 'random';
 }
 
 const LEVEL_NAME: Record<AiLevel, string> = { easy: '쉬움', normal: '보통', hard: '어려움' };
@@ -70,6 +70,7 @@ export class UI {
     this.scene.startBattle({
       seed: (Math.random() * 1e9) | 0,
       demo: true,
+      mapId: MAP_LIST[Math.floor(Math.random() * MAP_LIST.length)],
       players: (() => {
         const a = CHAR_LIST[Math.floor(Math.random() * CHAR_LIST.length)];
         let b = a;
@@ -143,7 +144,12 @@ export class UI {
             }).join('')}</div>
             <div class="opts">
               ${s.mode === 'ai' ? `<div class="seg" data-g="level">${(['easy', 'normal', 'hard'] as AiLevel[]).map((l) => `<button data-v="${l}" class="${s.level === l ? 'on' : ''}">${LEVEL_NAME[l]}</button>`).join('')}</div>` : ''}
-              <div class="seg" data-g="map">${MAPS.map((m) => `<button data-v="${m.id}" class="${s.map === m.id ? 'on' : ''}">${m.name}</button>`).join('')}</div>
+            </div>
+            <div class="maps" data-g="map">${MAP_LIST.map((id) => {
+              const m = MAP_INFO[id];
+              return `<button data-v="${id}" class="mapb ${s.map === id ? 'on' : ''}" title="${m.description}"><b>${m.icon} ${m.name}</b><small>${m.tags.join(' · ')}</small></button>`;
+            }).join('')}<button data-v="random" class="mapb ${s.map === 'random' ? 'on' : ''}"><b>🎲 랜덤 맵</b><small>무작위 전장</small></button></div>
+            <div class="opts">
             </div>
           </div>
           ${slotHtml('p2')}
@@ -169,11 +175,11 @@ export class UI {
         audio.click();
         return this.showSelect();
       }
-      const segBtn = t.closest('.seg button') as HTMLElement | null;
+      const segBtn = t.closest('.seg button, .maps button') as HTMLElement | null;
       if (segBtn) {
         const g = (segBtn.parentElement as HTMLElement).dataset.g!;
         if (g === 'level') s.level = segBtn.dataset.v as AiLevel;
-        if (g === 'map') s.map = segBtn.dataset.v!;
+        if (g === 'map') s.map = segBtn.dataset.v as MapId | 'random';
         audio.click();
         return this.showSelect();
       }
@@ -215,8 +221,9 @@ export class UI {
     this.stats = players.map(() => 0);
     this.lastTurn = -1;
     this.buildHud();
+    const mapId: MapId = s.map === 'random' ? MAP_LIST[Math.floor(Math.random() * MAP_LIST.length)] : s.map;
     this.scene.startBattle(
-      { seed: (Math.random() * 1e9) | 0, players },
+      { seed: (Math.random() * 1e9) | 0, players, mapId },
       { onEvent: (e, g) => this.onEvent(e, g), onGameOver: (g) => this.showResult(g) },
     );
     audio.playBgm('battle');
@@ -230,7 +237,8 @@ export class UI {
     if (e.type === 'turnStart') {
       const p = g.players[e.player];
       const local = this.setup.mode === 'local' || p.controller === 'human';
-      this.showBanner(local && this.setup.mode === 'ai' ? '나의 턴!' : `${p.name.split(' · ').pop()}의 턴`, `ROUND ${e.round}`);
+      const sub = e.round === 1 && g.turnNumber === 1 ? `${g.map.icon} ${g.map.name}` : `ROUND ${e.round}`;
+      this.showBanner(local && this.setup.mode === 'ai' ? '나의 턴!' : `${p.name.split(' · ').pop()}의 턴`, sub);
     }
   }
 

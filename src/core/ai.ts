@@ -26,7 +26,8 @@ export function predictImpact(g: Game, shooter: Player, facing: 1 | -1, angle: n
   const pr = launch({ footX: shooter.x, footY: shooter.y, facing, angle, power });
   const bodies = g.players.filter((p) => p.alive).map((p) => bodyCircle(p, p.id));
   for (let i = 0; i < 120 * 12; i++) {
-    const hit = stepProjectile(pr, g.wind * windFactor, terrain, bodies, WORLD_W, WORLD_H);
+    const hit = stepProjectile(pr, g.wind * windFactor, terrain, bodies, WORLD_W, WORLD_H, g.gravity);
+    if (!hit && g.map.liquidY !== null && pr.y >= g.map.liquidY && pr.vy > 0) return { kind: 'out', x: pr.x, y: pr.y };
     if (hit) return hit;
   }
   return null;

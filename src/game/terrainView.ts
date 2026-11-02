@@ -6,6 +6,10 @@ import { MAT, type MapId } from '../core/mapgen';
 const CHUNK = 256;
 
 function rgba(r: number, g: number, b: number, a = 255) {
+  // 0..255로 고정 (밝게 할 때 넘치면 다른 채널로 번지는 문제 방지)
+  r = r < 0 ? 0 : r > 255 ? 255 : r | 0;
+  g = g < 0 ? 0 : g > 255 ? 255 : g | 0;
+  b = b < 0 ? 0 : b > 255 ? 255 : b | 0;
   return ((a << 24) | (b << 16) | (g << 8) | r) >>> 0; // little-endian ImageData
 }
 function hex(h: string) {
@@ -17,29 +21,63 @@ function mix(a: readonly number[], b: readonly number[], t: number) {
 }
 
 interface Theme {
+  /** 암석/흙 단계색 (어두움 → 밝음) */
+  ramp: string[];
+  /** 지표층 (가장 밝음 → 어두움) */
   top: [string, string, string];
   topDepth: number;
-  body: [string, string, string];
-  deep: [string, string];
-  stone: string;
-  stoneHi: string;
-  stoneDk: string;
-  stoneRate: number;
-  fleck: string;
-  fleckRate: number;
+  crack: string;
+  /** 박힌 돌 색 (어두움, 중간, 밝음) */
+  rock: [string, string, string];
+  rockRate: number;
+  /** 지표 크레이터 장식 */
   craters?: boolean;
+  /** 용암 균열 */
   veins?: boolean;
+  /** 뿌리 */
   roots?: boolean;
+  /** 광물 반짝이 */
+  gem?: string;
+  /** 노이즈 스케일 (클수록 큰 무늬) */
+  grain: number;
 }
 
 const THEMES: Record<MapId, Theme> = {
-  herb_forest: { top: ['#b4ef6a', '#6cc24a', '#3f8f3a'], topDepth: 9, body: ['#8a5a3b', '#6e4630', '#9c6b45'], deep: ['#5d4e5c', '#463a4a'], stone: '#9a96a8', stoneHi: '#c9c6d6', stoneDk: '#5f5b70', stoneRate: 0.16, fleck: '#6fffd2', fleckRate: 0.0025, roots: true },
-  ice_peaks: { top: ['#ffffff', '#e2f2ff', '#b8d8f2'], topDepth: 12, body: ['#5a6a8c', '#4a5878', '#6d7ea0'], deep: ['#3a4462', '#2e3652'], stone: '#8ea0c4', stoneHi: '#d8e6ff', stoneDk: '#3a4868', stoneRate: 0.14, fleck: '#bff4ff', fleckRate: 0.006 },
-  moon_base: { top: ['#e2e2ea', '#c4c4d0', '#a8a8b8'], topDepth: 7, body: ['#a0a0ae', '#8c8c9c', '#b2b2c0'], deep: ['#6c6c80', '#5a5a70'], stone: '#9090a4', stoneHi: '#d4d4e2', stoneDk: '#4a4a5e', stoneRate: 0.22, fleck: '#7ad8ff', fleckRate: 0.0015, craters: true },
-  pirate_cove: { top: ['#8fd45a', '#5aa83e', '#3a7a34'], topDepth: 7, body: ['#5a6470', '#4a5460', '#6a7480'], deep: ['#3c4450', '#323a46'], stone: '#7a8490', stoneHi: '#b8c0cc', stoneDk: '#2e343e', stoneRate: 0.2, fleck: '#e8d08a', fleckRate: 0.004 },
-  volcano_lab: { top: ['#9a8a86', '#6e5e5c', '#4a3a3c'], topDepth: 8, body: ['#3a2c30', '#33272b', '#403034'], deep: ['#241a1e', '#1c1418'], stone: '#5a4a4e', stoneHi: '#8a7476', stoneDk: '#1a1214', stoneRate: 0.12, fleck: '#ffb03a', fleckRate: 0.001, veins: true },
-  sky_pharmacy: { top: ['#c4ff8a', '#7ee05a', '#4ab048'], topDepth: 9, body: ['#c8a070', '#b08a5a', '#d6b080'], deep: ['#e8e4f4', '#d0cce4'], stone: '#e0d0b8', stoneHi: '#fff4e0', stoneDk: '#9a8060', stoneRate: 0.1, fleck: '#ffffff', fleckRate: 0.004 },
+  herb_forest: { ramp: ['#3e2618', '#5a3822', '#76502f', '#946840', '#b08452'], top: ['#b4ef6a', '#6cc24a', '#3f8f3a'], topDepth: 10, crack: '#2a160e', rock: ['#5f5b70', '#9a96a8', '#d0cede'], rockRate: 0.12, roots: true, gem: '#6fffd2', grain: 1 },
+  ice_peaks: { ramp: ['#232c48', '#33405f', '#4a5a80', '#6a7ea6', '#91a6c8'], top: ['#ffffff', '#e2f2ff', '#b8d8f2'], topDepth: 13, crack: '#161c30', rock: ['#3a4868', '#8ea0c4', '#d8e6ff'], rockRate: 0.1, gem: '#bff4ff', grain: 1.2 },
+  moon_base: { ramp: ['#1c1d38', '#2b2d52', '#40436e', '#5c618e', '#8188b2'], top: ['#e8ebfa', '#bcc2e0', '#8f96be'], topDepth: 12, crack: '#121226', rock: ['#2a2a48', '#6a6e98', '#b4b8da'], rockRate: 0.1, craters: true, gem: '#7ad8ff', grain: 1.4 },
+  pirate_cove: { ramp: ['#20262e', '#303842', '#444e5a', '#5c6874', '#7e8c98'], top: ['#8fd45a', '#5aa83e', '#3a7a34'], topDepth: 8, crack: '#14181e', rock: ['#2e343e', '#7a8490', '#b8c0cc'], rockRate: 0.14, gem: '#e8d08a', grain: 1.1 },
+  volcano_lab: { ramp: ['#180e12', '#26181c', '#382428', '#4e3236', '#6a4646'], top: ['#9a8a86', '#6e5e5c', '#4a3a3c'], topDepth: 8, crack: '#0c0608', rock: ['#1a1214', '#5a4a4e', '#8a7476'], rockRate: 0.1, veins: true, grain: 1.2 },
+  sky_pharmacy: { ramp: ['#6a4a2e', '#8a6440', '#a87e52', '#c49a68', '#dcb888'], top: ['#c4ff8a', '#7ee05a', '#4ab048'], topDepth: 10, crack: '#4a3020', rock: ['#9a8060', '#e0d0b8', '#fff4e0'], rockRate: 0.08, grain: 1 },
 };
+
+/** 부드러운 2D 값 노이즈 (0..1) */
+function vnoise(x: number, y: number, seed: number) {
+  const xi = Math.floor(x),
+    yi = Math.floor(y);
+  const xf = x - xi,
+    yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf),
+    v = yf * yf * (3 - 2 * yf);
+  const a = hash2(xi, yi, seed),
+    b = hash2(xi + 1, yi, seed),
+    c = hash2(xi, yi + 1, seed),
+    d = hash2(xi + 1, yi + 1, seed);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+function fbm2(x: number, y: number, seed: number, oct = 4) {
+  let s = 0,
+    amp = 0.5,
+    f = 1,
+    n = 0;
+  for (let o = 0; o < oct; o++) {
+    s += vnoise(x * f, y * f, seed + o * 17) * amp;
+    n += amp;
+    amp *= 0.5;
+    f *= 2.03;
+  }
+  return s / n;
+}
 
 /**
  * 지형 렌더러. 물리 마스크(Terrain.mask)를 그대로 읽어 그리므로 화면과 충돌 판정이 항상 일치한다.
@@ -108,9 +146,8 @@ export class TerrainView {
         const r = c & 255,
           g = (c >> 8) & 255,
           b = (c >> 16) & 255;
-        const l = (r + g + b) / 3;
-        // 어둡고 채도가 낮은 보라빛 흙벽
-        out[y * w + x] = rgba(l * 0.22 + r * 0.12 + 18, l * 0.18 + g * 0.08 + 12, l * 0.22 + b * 0.1 + 24);
+        // 같은 지형 색을 어둡게 + 남색으로 살짝 → 맵마다 자연스러운 동굴 벽
+        out[y * w + x] = rgba(r * 0.3 + 10, g * 0.3 + 10, b * 0.34 + 22);
       }
     ctx.putImageData(img, 0, 0);
   }
@@ -125,16 +162,16 @@ export class TerrainView {
 
   private buildBase(material: Uint8Array, th: Theme, seed: number) {
     const { w, h, mask } = this.terrain;
+    const ramp = th.ramp.map(hex);
     const T = th.top.map(hex);
-    const body = th.body.map(hex);
-    const deep = th.deep.map(hex);
-    const stone = hex(th.stone),
-      stoneHi = hex(th.stoneHi),
-      stoneDk = hex(th.stoneDk);
-    const fleck = hex(th.fleck);
-    const wood = [hex('#9a6a38'), hex('#7a4e26'), hex('#5a361a')];
-    const metal = [hex('#9aa6ba'), hex('#6a7690'), hex('#3a445a'), hex('#5ec8ff')];
-    const ice = [hex('#e6f8ff'), hex('#a8e4ff'), hex('#6ac0ef')];
+    const crack = hex(th.crack);
+    const rk = th.rock.map(hex);
+    const gem = th.gem ? hex(th.gem) : null;
+    const wood = [hex('#a8743c'), hex('#8a5a2c'), hex('#6a4220'), hex('#3e2410')];
+    const metal = [hex('#c8d2e2'), hex('#8e9ab2'), hex('#5e6a84'), hex('#353e54'), hex('#5ec8ff')];
+    const ice = [hex('#f2fbff'), hex('#bfeaff'), hex('#86cdf2'), hex('#4f9fd6')];
+    const g = th.grain;
+    // 열별 "위에서부터 깊이" (지층/명암 기준)
     for (let x = 0; x < w; x++) {
       let depth = 0;
       for (let y = 0; y < h; y++) {
@@ -143,67 +180,108 @@ export class TerrainView {
           depth = 0;
           continue;
         }
-        const n = hash2(x >> 2, y >> 2, seed);
-        const n2 = hash2(x, y, seed + 7);
         const m = material[i];
         let c: number[];
         if (m === MAT.wood) {
-          // 나무 판자: 가로 판자 + 이음새 + 못
-          const plank = Math.floor(y / 5);
-          const seam = (x + plank * 13) % 24 === 0;
-          c = y % 5 === 0 || seam ? [...wood[2]] : (plank % 2 ? [...wood[0]] : [...wood[1]]);
-          if ((x + plank * 13) % 24 === 2 && y % 5 === 2) c = [200, 200, 210];
+          const plank = Math.floor(y / 6);
+          const off = (plank * 17) % 28;
+          const seam = (x + off) % 28 === 0;
+          const yy = y % 6;
+          const grainN = vnoise(x / 6, y * 1.5, seed + 5);
+          c = yy === 0 || seam ? [...wood[3]] : yy === 1 ? [...wood[0]] : grainN > 0.6 ? [...wood[1]] : [...wood[2]];
+          if ((x + off) % 28 === 3 && yy === 3) c = [214, 214, 222];
         } else if (m === MAT.metal) {
-          // 금속 거더: 테두리 + 리벳 + 파란 표시등
-          const ey = y % 6;
-          c = ey === 0 || ey === 5 ? [...metal[2]] : ey === 1 ? [...metal[0]] : [...metal[1]];
-          if (x % 14 === 3 && ey === 3) c = [210, 220, 235];
-          if (x % 56 === 10 && ey === 2) c = [...metal[3]];
+          const ey = y % 8;
+          c = ey === 0 || ey === 7 ? [...metal[3]] : ey === 1 ? [...metal[0]] : ey < 4 ? [...metal[1]] : [...metal[2]];
+          if (x % 16 === 4 && (ey === 2 || ey === 5)) c = [236, 242, 250];
+          if (x % 64 === 12 && ey === 3) c = [...metal[4]];
         } else if (m === MAT.ice) {
-          c = depth < 2 ? [...ice[0]] : n < 0.5 ? [...ice[1]] : [...ice[2]];
-          if (n2 < 0.06) c = [255, 255, 255];
+          const n = fbm2(x / 8, y / 8, seed + 9, 2);
+          c = depth < 2 ? [...ice[0]] : n > 0.6 ? [...ice[1]] : n > 0.4 ? [...ice[2]] : [...ice[3]];
+          if (hash2(x, y, seed) < 0.03) c = [255, 255, 255];
         } else {
-          const topDepth = th.topDepth + Math.floor(hash2(x >> 1, 0, seed + 3) * 4);
-          if (depth < 2) c = [...T[0]];
-          else if (depth < 5) c = [...T[1]];
-          else if (depth < topDepth) c = mix(T[1], T[2], (depth - 5) / Math.max(1, topDepth - 5));
-          else {
-            const d = Math.min(1, Math.max(0, (depth - 140) / 140));
-            const bc = n < 0.33 ? body[0] : n < 0.66 ? body[1] : body[2];
-            c = mix(bc, n < 0.5 ? deep[0] : deep[1], d);
-            if (((y + Math.floor(hash2(x >> 4, 1, seed) * 6)) % 46) < 2) c = mix(c, [20, 14, 24], 0.3);
-            // 돌/크레이터
-            const gx = Math.floor(x / 14),
-              gy = Math.floor(y / 14);
-            const sh = hash2(gx, gy, seed + 11);
-            if (sh < th.stoneRate && depth > 12) {
-              const scx = gx * 14 + 7 + (hash2(gx, gy, seed + 12) - 0.5) * 6;
-              const scy = gy * 14 + 7 + (hash2(gx, gy, seed + 13) - 0.5) * 6;
-              const rr = 2.5 + sh * 20;
-              const dx = x - scx,
-                dy = y - scy;
-              const d2 = (dx * dx) / (rr * rr) + (dy * dy) / (rr * rr * 0.6);
-              if (d2 < 1) {
-                if (th.craters) c = d2 > 0.6 ? (dy < 0 ? [...stoneDk] : [...stoneHi]) : mix(c, [...stoneDk], 0.35);
-                else c = d2 < 0.35 && dx < 0 && dy < 0 ? [...stoneHi] : dy > rr * 0.3 ? [...stoneDk] : [...stone];
+          const topDepth = th.topDepth + Math.floor(vnoise(x / 6, 0, seed + 3) * 5);
+          // 지표층 (잔디/눈/표토) — 아래쪽 경계는 물결 모양
+          if (depth < topDepth) {
+            c = depth < 2 ? [...T[0]] : depth < topDepth * 0.55 ? [...T[1]] : [...T[2]];
+            if (depth >= 2 && hash2(x, y, seed + 1) < 0.08) c = [...T[0]];
+          } else {
+            // 암석: 가로로 늘어난 노이즈 + 잔무늬 → 5단계 포스터라이즈
+            // 가로로 길게 늘어난 암석층 + 잔무늬 → 5단계 포스터라이즈
+            const n = fbm2(x / (44 * g), y / (11 * g), seed) * 0.7 + fbm2(x / (7 * g), y / (5 * g), seed + 40, 2) * 0.3;
+            let band = Math.floor(((n - 0.28) / 0.44) * 4.99);
+            // 깊이에 따른 명암 (위 밝게, 깊을수록 어둡게)
+            if (depth < topDepth + 10) band += 1;
+            if (depth > 110) band -= 1;
+            if (depth > 260) band -= 1;
+            // 지층 (지표를 따라 흐르는 어두운 줄)
+            const sd = depth + Math.floor(vnoise(x / 40, y / 40, seed + 2) * 14);
+            if (sd % 38 < 2) band -= 1;
+            band = Math.max(0, Math.min(4, band));
+            c = [...ramp[band]];
+            // 균열 (능선 노이즈 선)
+            // 균열: 드문드문 끊기는 가는 선 + 아래쪽 밝은 테두리(음각 느낌)
+            const r = Math.abs(fbm2(x / 46, y / 46, seed + 77, 3) - 0.5);
+            const on = vnoise(x / 30, y / 30, seed + 78) > 0.55;
+            const r2 = Math.abs(fbm2(x / 46, (y - 1) / 46, seed + 77, 3) - 0.5);
+            if (on && r < 0.006 && depth > topDepth + 6) c = [...crack];
+            else if (on && r2 < 0.006 && depth > topDepth + 6) c = mix(c, ramp[Math.min(4, band + 2)], 0.7);
+            // 박힌 바위 (지터 셀 중심의 둥근 돌, 좌상단 하이라이트 / 우하단 그림자)
+            const cs = 20;
+            const gx = Math.floor(x / cs),
+              gy = Math.floor(y / cs);
+            const hv = hash2(gx, gy, seed + 11);
+            if (hv < th.rockRate && depth > topDepth + 6) {
+              const ccx = gx * cs + 4 + hash2(gx, gy, seed + 12) * 12;
+              const ccy = gy * cs + 4 + hash2(gx, gy, seed + 13) * 12;
+              const rr = 3 + hv / th.rockRate * 6;
+              const dx = x + 0.5 - ccx,
+                dy = y + 0.5 - ccy;
+              const d = Math.sqrt(dx * dx + dy * dy * 1.5) / rr;
+              if (d < 1) {
+                if (d > 0.82) c = [...rk[0]];
+                else c = dx + dy < -rr * 0.5 ? [...rk[2]] : dx + dy > rr * 0.4 ? mix(rk[0], rk[1], 0.5) : [...rk[1]];
               }
             }
-            // 테마 특수 무늬
             if (th.veins) {
-              // 사선으로 이어지는 가는 용암 균열
-              const band = (x * 3 + y * 5 + Math.floor(hash2(x >> 5, y >> 5, seed + 31) * 400)) % 97;
-              const crack = band < 2 && hash2(x >> 4, y >> 4, seed + 32) < 0.35;
-              if (crack && depth > 10) c = mix([255, 110, 30], [255, 210, 90], hash2(x >> 1, y >> 1, seed));
-              else if (band < 4 && hash2(x >> 4, y >> 4, seed + 32) < 0.35 && depth > 10) c = mix(c, [150, 40, 20], 0.5);
+              // 드문드문 이어지는 용암 균열 (밝은 심지 + 붉은 테두리)
+              const v = Math.abs(fbm2(x / 70, y / 70, seed + 31, 3) - 0.5);
+              const gate = vnoise(x / 60, y / 60, seed + 33) > 0.6;
+              if (gate && v < 0.006 && depth > 12) c = mix([255, 120, 30], [255, 220, 100], vnoise(x / 3, y / 3, seed));
+              else if (gate && v < 0.014 && depth > 12) c = mix(c, [170, 50, 20], 0.5);
             }
-            if (th.roots && depth > topDepth && depth < 60 && hash2(x >> 1, (y + (x >> 3)) >> 3, seed + 21) < 0.04) c = [90, 58, 34];
-            if (depth > 50 && n2 < th.fleckRate) c = [...fleck];
-            const v = (n2 - 0.5) * 10;
-            c = [c[0] + v, c[1] + v, c[2] + v];
+            if (th.roots && depth < 70 && Math.abs(fbm2(x / 14, y / 30, seed + 21, 2) - 0.5) < 0.012) c = [74, 46, 26];
+            if (gem && depth > 40 && hash2(x >> 1, y >> 1, seed + 50) < 0.0015) c = [...gem];
           }
         }
         this.base[i] = rgba(c[0], c[1], c[2]);
         depth++;
+      }
+    }
+    // 지표 크레이터 장식 (달)
+    if (th.craters) {
+      for (let k = 0; k < 70; k++) {
+        const cx = hash2(k, 1, seed) * w;
+        const top = this.terrain.surfaceBelow(cx, 0);
+        if (top < 0) continue;
+        const cy = top + 8 + hash2(k, 2, seed) * 60;
+        const r = 4 + hash2(k, 3, seed) * 11;
+        for (let y = Math.floor(cy - r); y <= cy + r; y++)
+          for (let x = Math.floor(cx - r * 1.5); x <= cx + r * 1.5; x++) {
+            if (x < 0 || y < 0 || x >= w || y >= h || !mask[y * w + x]) continue;
+            const dx = (x - cx) / (r * 1.5),
+              dy = (y - cy) / r;
+            const d = dx * dx + dy * dy;
+            if (d > 1) continue;
+            const i = y * w + x;
+            const col = this.base[i];
+            const cr = col & 255,
+              cg = (col >> 8) & 255,
+              cb = (col >> 16) & 255;
+            // 오목한 그릇: 위쪽 안벽 어둡게, 아래쪽 안벽 밝게, 테두리 밝게
+            const k2 = d > 0.75 ? 1.18 : dy < 0 ? 0.72 : 1.06;
+            this.base[i] = rgba(cr * k2, cg * k2, cb * k2);
+          }
       }
     }
   }
@@ -228,7 +306,7 @@ export class TerrainView {
 
   /** 변경 영역(rect)이 걸친 청크만 다시 그린다 */
   redraw(rect: Rect) {
-    const pad = 2;
+    const pad = 5;
     const rx0 = Math.max(0, rect.x - pad),
       ry0 = Math.max(0, rect.y - pad);
     const rx1 = Math.min(this.terrain.w, rect.x + rect.w + pad),
@@ -265,26 +343,32 @@ export class TerrainView {
           g = (c >> 8) & 255,
           b = (c >> 16) & 255;
         const sc = this.scorch[i];
+        // 조명: 1px 외곽선, 위가 트인 면은 밝게, 아래가 트인 면은 그림자
+        const air = (dx: number, dy: number) => {
+          const xx = wx + dx,
+            yy = wy + dy;
+          if (xx < 0 || xx >= W) return false;
+          if (yy < 0) return true;
+          if (yy >= t.h) return false;
+          return m[yy * W + xx] === 0;
+        };
+        let k = 1;
+        if (air(0, -1) || air(-1, 0) || air(1, 0) || air(0, 1)) {
+          k = air(0, -1) && !sc ? 0.62 : 0.5; // 외곽선
+        } else if (air(0, -2) || air(-1, -2) || air(1, -2)) k = 1.28;
+        else if (air(0, -3)) k = 1.16;
+        else if (air(0, -4)) k = 1.07;
+        else if (air(0, 2)) k = 0.72;
+        else if (air(0, 3)) k = 0.84;
+        else if (air(-2, 0) || air(2, 0)) k = 0.88;
+        r *= k;
+        g *= k;
+        b *= k;
         if (sc) {
-          const k = sc / 255;
-          r = r * (1 - k) + 34 * k;
-          g = g * (1 - k) + 20 * k;
-          b = b * (1 - k) + 22 * k;
-        }
-        // 외곽선: 빈 공간과 맞닿은 픽셀을 어둡게 → 파괴된 가장자리가 자연스럽게 보임
-        const up = wy > 0 ? m[i - W] : 0;
-        const left = wx > 0 ? m[i - 1] : 1;
-        const right = wx < W - 1 ? m[i + 1] : 1;
-        const down = wy < t.h - 1 ? m[i + W] : 1;
-        if (!left || !right || !down || (!up && sc)) {
-          const k = sc ? 0.45 : 0.3;
-          r *= 1 - k;
-          g *= 1 - k;
-          b *= 1 - k;
-        } else if (wy > 1 && !m[i - 2 * W] && sc) {
-          r *= 0.8;
-          g *= 0.8;
-          b *= 0.8;
+          const s2 = sc / 255;
+          r = r * (1 - s2) + 30 * s2;
+          g = g * (1 - s2) + 20 * s2;
+          b = b * (1 - s2) + 30 * s2;
         }
         out[y * w + x] = rgba(r, g, b);
       }

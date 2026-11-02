@@ -24,7 +24,7 @@ export interface MapInfo {
 export const MAP_INFO: Record<MapId, MapInfo> = {
   herb_forest: { id: 'herb_forest', name: '약초의 숲', icon: '🌿', description: '거대한 약초와 버섯이 자라는 초록빛 전장', gravityScale: 1, windScale: 1, liquidY: null, liquid: null, backdrop: null, tags: ['기본'] },
   ice_peaks: { id: 'ice_peaks', name: '빙결 설산', icon: '❄️', description: '얼음 성채 아래 계단식 설벽과 얼어붙은 호수', gravityScale: 1, windScale: 1.2, liquidY: 1010, liquid: 'ice_water', backdrop: 'ice_peaks', tags: ['강풍', '나무 다리', '호수 추락'] },
-  moon_base: { id: 'moon_base', name: '달 기지', icon: '🌙', description: '구멍 숭숭 달 표면과 제약 우주기지', gravityScale: 0.62, windScale: 0, liquidY: null, liquid: null, backdrop: 'moon_base', tags: ['저중력', '무풍', '동굴'] },
+  moon_base: { id: 'moon_base', name: '달 기지', icon: '🌙', description: '지구가 떠오른 달 표면과 제약 우주정거장', gravityScale: 0.62, windScale: 0, liquidY: null, liquid: null, backdrop: null, tags: ['저중력', '무풍', '동굴'] },
   pirate_cove: { id: 'pirate_cove', name: '해적의 만', icon: '🏴‍☠️', description: '난파선이 잠든 만, 양쪽 해안의 나무 부두', gravityScale: 1, windScale: 1, liquidY: 880, liquid: 'water', backdrop: 'pirate_cove', tags: ['바다 추락', '부두', '암초'] },
   volcano_lab: { id: 'volcano_lab', name: '화산 연구소', icon: '🌋', description: '용암 바다 위 현무암 지대와 거대한 분화구', gravityScale: 1, windScale: 0.8, liquidY: 1000, liquid: 'lava', backdrop: null, tags: ['용암', '험준한 지형'] },
   sky_pharmacy: { id: 'sky_pharmacy', name: '하늘의 약국', icon: '☁️', description: '구름 위에 떠 있는 약국 섬들', gravityScale: 1, windScale: 1.3, liquidY: null, liquid: null, backdrop: null, tags: ['공중섬', '낙하 주의', '강풍'] },
@@ -225,41 +225,87 @@ function genIce(b: Builder, rng: Rng, liquidY: number) {
   for (const px of [bl + 4, br - 6]) b.rect(px, by - 18, 4, 18, 1, MAT.wood);
 }
 
+/** 각도별 반지름이 흔들리는 불규칙한 구멍 (사칙연산만 사용) */
+function blob(b: Builder, cx: number, cy: number, r: number, seed: number, v: 0 | 1, m = 0, squash = 0.85) {
+  const BINS = 12;
+  const rs: number[] = [];
+  for (let i = 0; i < BINS; i++) rs.push(0.72 + hash2(i, 7, seed) * 0.5);
+  for (let y = Math.floor(cy - r * 1.3); y <= cy + r * 1.3; y++)
+    for (let x = Math.floor(cx - r * 1.3); x <= cx + r * 1.3; x++) {
+      const dx = x + 0.5 - cx,
+        dy = (y + 0.5 - cy) / squash;
+      const d2 = dx * dx + dy * dy;
+      // 다이아몬드 각도 → 구간 보간
+      let a = 0;
+      if (dx !== 0 || dy !== 0) a = dy >= 0 ? (dx >= 0 ? dy / (dx + dy) : 1 - dx / (-dx + dy)) : dx < 0 ? 2 - dy / (-dx - dy) : 3 + dx / (dx - dy);
+      const f = (a / 4) * BINS;
+      const i0 = Math.floor(f) % BINS;
+      const t = f - Math.floor(f);
+      const rr = r * (rs[i0] * (1 - t) + rs[(i0 + 1) % BINS] * t);
+      if (d2 <= rr * rr) b.set(x, y, v, m);
+    }
+}
+
 function genMoon(b: Builder, rng: Rng) {
   const { w, h } = b;
   const s1 = rng.int(1, 1e6),
     s2 = rng.int(1, 1e6);
   const surf = new Int32Array(w);
+  // 지표 크레이터 (그릇 모양으로 파인 곳) — 좌우 대칭
+  const craters: [number, number, number][] = [];
+  for (let k = 0; k < 4; k++) {
+    const u = 0.08 + hash2(k, 1, s1) * 0.32;
+    const rad = 40 + hash2(k, 2, s1) * 60;
+    const dep = 14 + hash2(k, 3, s1) * 26;
+    craters.push([u * w, rad, dep], [(1 - u) * w, rad, dep]);
+  }
   for (let x = 0; x < w; x++) {
     const u = x / w;
-    const v = (fbm(u * 7, s1) + fbm((1 - u) * 7, s1)) * 0.5;
-    // 메사(평평한 고원) 효과: 단계 함수에 가깝게
-    const step = Math.round(v * 5) / 5;
-    const mix = step * 0.8 + v * 0.2;
-    let y = h * 0.64 - (mix - 0.5) * 420 - (fbm(u * 40, s2) - 0.5) * 18;
+    const v = (fbm(u * 6, s1) + fbm((1 - u) * 6, s1)) * 0.5;
+    // 완만한 메사 + 거친 바위 능선
+    const step = Math.round(v * 4) / 4;
+    const mix = step * 0.6 + v * 0.4;
+    const ridge = 1 - Math.abs(fbm(u * 60, s2) * 2 - 1);
+    let y = h * 0.64 - (mix - 0.5) * 380 - ridge * 14 - (fbm(u * 160, s2 + 3) - 0.5) * 6;
+    for (const [cx, rad, dep] of craters) {
+      const d = Math.abs(x - cx) / rad;
+      if (d < 1) y += dep * (1 - d * d);
+      else if (d < 1.35) y -= dep * 0.35 * (1 - (d - 1) / 0.35); // 가장자리 둔덕
+    }
     y = Math.max(h * 0.3, Math.min(h * 0.85, y));
     surf[x] = Math.round(y);
     b.column(x, surf[x]);
   }
-  // 구멍/동굴 (시작 지점 주변은 보존)
+  // 튀어나온 바위 (지표 위로 솟은 덩어리)
+  for (let k = 0; k < 7; k++) {
+    const u = 0.05 + hash2(k, 4, s2) * 0.4;
+    for (const xx of [u * w, (1 - u) * w]) {
+      const r = 10 + hash2(k, 5, s2) * 16;
+      blob(b, xx, surf[Math.floor(xx)] - r * 0.25, r, s2 + k, 1, MAT.ground, 0.7);
+    }
+  }
+  // 내부 동굴 — 수를 줄이고 모양을 불규칙하게
   const keep = targetsFor(w, 4);
-  for (let k = 0; k < 46; k++) {
-    const x = rng.range(30, w - 30);
+  for (let k = 0; k < 6; k++) {
+    const u = 0.04 + hash2(k, 6, s1) * 0.42;
+    const x = u * w;
     const s = surf[Math.floor(x)];
-    const r = rng.range(10, 46);
-    const y = s + r * 0.6 + rng.range(10, 220);
-    if (keep.some((kx) => Math.abs(kx - x) < 90 + r) && y - r < s + 40) continue;
-    // 대칭으로 하나 더
-    b.ellipse(x, y, r, r * 0.9, 0);
-    b.ellipse(w - x, y, r, r * 0.9, 0);
+    const r = 18 + hash2(k, 7, s1) * 34;
+    const y = s + r + 40 + hash2(k, 8, s1) * 220;
+    if (keep.some((kx) => Math.abs(kx - x) < 100 + r) && y - r < s + 60) continue;
+    blob(b, x, y, r, s1 + k, 0, 0, 0.6);
+    blob(b, w - x, y, r, s1 + k, 0, 0, 0.6);
   }
   // 금속 다리 2개 (대칭)
   for (const [a, c] of [[0.24, 0.36], [0.64, 0.76]]) {
     const xa = Math.floor(w * a),
       xc = Math.floor(w * c);
-    const y = Math.min(surf[xa], surf[xc]) - 4;
-    b.rect(xa, y, xc - xa, 6, 1, MAT.metal);
-    for (let x = xa + 20; x < xc - 10; x += 60) b.rect(x, y + 6, 4, Math.max(0, Math.min(h, surf[x]) - y - 6), 1, MAT.metal);
+    const y = Math.min(b.t.surfaceBelow(xa, 0), b.t.surfaceBelow(xc, 0)) - 6;
+    b.rect(xa, y, xc - xa, 8, 1, MAT.metal);
+    for (let x = xa + 24; x < xc - 12; x += 64) {
+      const ground = b.t.surfaceBelow(x, y + 8);
+      if (ground > 0) b.rect(x, y + 8, 6, ground - y - 8, 1, MAT.metal);
+    }
   }
 }
 

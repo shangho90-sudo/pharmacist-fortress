@@ -13,7 +13,7 @@ CELLS = [
     (B, 150, 500, 560, 1024, 'cheol'), (B, 560, 500, 960, 1024, 'seok'), (B, 960, 500, 1400, 1024, 'dong'),
 ]
 OUT = sys.argv[1]
-TARGET_H = 120  # 화면 픽셀 기준 높이 (게임에서 0.5배로 표시 → 월드 60px)
+TARGET_H = 240  # 텍스처 높이. 게임에서 1/3배로 표시 → 월드 80px (줌2: 화면 160px, 줌3: 240px 1:1)
 
 for path, x0, y0, x1, y1, cid in CELLS:
     im = np.asarray(Image.open(path).convert('RGB')).astype(np.int16)[y0:y1, x0:x1]
@@ -66,7 +66,8 @@ for path, x0, y0, x1, y1, cid in CELLS:
     w = round(img.width * TARGET_H / img.height)
     pm = Image.fromarray(rgba, 'RGBA').convert('RGBa').resize((w, TARGET_H), Image.LANCZOS).convert('RGBA')
     a = np.asarray(pm).copy()
-    a[..., 3] = np.where(a[..., 3] > 110, 255, 0)  # 픽셀아트처럼 알파를 이진화
+    # 부드러운 알파 유지(선형 필터링용), 희미한 번짐만 제거
+    a[..., 3] = np.where(a[..., 3] < 40, 0, np.minimum(255, a[..., 3].astype(np.int32) * 5 // 4))
     Image.fromarray(a, 'RGBA').save(f'{OUT}/{cid}.png', optimize=True)
     Image.fromarray(rgba, 'RGBA').save(f'/tmp/full_{cid}.png')
     print(cid, 'plate_top', plate_top, 'crop', (cx1 - cx0, cy1 - cy0), '->', (w, TARGET_H))

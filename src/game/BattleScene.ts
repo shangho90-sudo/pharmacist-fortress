@@ -6,15 +6,29 @@ import { Game, type GameEvent, type Player, type PlayerSetup } from '../core/gam
 import { cosDeg, sinDeg } from '../core/physics';
 import { WEAPONS, type WeaponId } from '../core/weapons';
 import { MAP_INFO, MAP_LIST, type MapId } from '../core/mapgen';
-import { CHAR_SCALE, drawGun, drawProjectile, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
+import { CHAR_SCALE, drawGun, drawProjectile, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_RES, GUN_SCALE, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
 import { audio } from './audio';
 import { buildForestLayers, buildPineLayer, buildSkyLayers, buildVolcanoLayers, cloudsCanvas, skyCanvas } from './background';
 import { Effects } from './effects';
+import { asteroidCanvas, earthCanvas, nebulaCanvas, shipCanvas, stationCanvas } from './spaceBg';
 import { TerrainView } from './terrainView';
 
 export const VIEW_W = 960; // 월드 기준 화면 폭 (줌 2 → 캔버스 1920)
 export const VIEW_H = 540;
-export const ZOOM = 2;
+/** 정수 줌만 사용(픽셀아트 선명도). 고해상도 데스크톱(실제 픽셀 2500+)은 3배, 그 외 2배 */
+function pickZoom(): number {
+  try {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = Math.min(window.innerWidth, (window.innerHeight * 16) / 9);
+    const touch = matchMedia('(pointer: coarse)').matches;
+    return !touch && cssW * dpr >= 2500 ? 3 : 2;
+  } catch {
+    return 2;
+  }
+}
+export const ZOOM = pickZoom();
+/** 하단 UI 패널 아래로도 지형이 보이도록 카메라가 맵 바닥보다 더 내려갈 수 있는 여유 */
+export const CAM_EXTRA = 120;
 const CAM_TOP = -420;
 const CHARGE_TIME = 2.0; // 파워 0→100 (초)
 
@@ -34,7 +48,9 @@ interface CharView {
   body: Phaser.GameObjects.Image;
   gun: Phaser.GameObjects.Image;
   label: Phaser.GameObjects.Text;
+  hpText: Phaser.GameObjects.Text;
   hpBar: Phaser.GameObjects.Graphics;
+  shadow: Phaser.GameObjects.Image;
   shownHp: number;
   lastX: number;
   walkDist: number;
@@ -56,7 +72,7 @@ export class BattleScene extends Phaser.Scene {
   private projSprites = new Map<number, { img: Phaser.GameObjects.Image; trail: Phaser.GameObjects.Particles.ParticleEmitter }>();
   private fx!: Effects;
   private acc = 0;
-  private bgImages: { img: Phaser.GameObjects.Image | Phaser.GameObjects.TileSprite; factor: number; y: number; kind: 'layer' | 'sky' | 'cloud' }[] = [];
+  private bgImages: { img: Phaser.GameObjects.Image | Phaser.GameObjects.TileSprite; factor: number; y: number; kind: 'layer' | 'sky' | 'cloud'; ox?: number; oy?: number; bob?: number; bobSpeed?: number; phase?: number; spin?: number }[] = [];
   private aimGfx!: Phaser.GameObjects.Graphics;
   private marker!: Phaser.GameObjects.Image;
   private ambient: Phaser.GameObjects.Particles.ParticleEmitter | null = null;
@@ -105,6 +121,12 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.setZoom(ZOOM);
     this.cameras.main.setBackgroundColor('#2a6f8c');
     this.makeTextures();
+    // 일러스트(캐릭터·배경 사진)는 선형 필터, 픽셀아트(지형·무기·이펙트)는 최근접 필터
+    for (const id of CHAR_LIST) this.textures.get(`char_${id}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    for (const id of MAP_LIST) {
+      const bd = MAP_INFO[id].backdrop;
+      if (bd && this.textures.exists(`bg_${bd}`)) this.textures.get(`bg_${bd}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    }
     this.fx = new Effects(this);
     this.aimGfx = this.add.graphics().setDepth(25);
     this.marker = this.add.image(0, 0, 'ui_marker').setDepth(45).setVisible(false);
@@ -119,7 +141,7 @@ export class BattleScene extends Phaser.Scene {
     };
     for (const id of CHAR_LIST) {
       const def = CHAR_TYPES[id];
-      const g = makeCanvas(GUN_W, GUN_H);
+      const g = makeCanvas(GUN_W * GUN_RES, GUN_H * GUN_RES);
       drawGun(g.getContext('2d')!, def.gun, def.palette);
       add(`gun_${id}`, g);
       for (const w of Object.values(WEAPONS)) add(`proj_${w.id}_${id}`, drawProjectile(w.look, w.color ?? def.palette.accent));
@@ -178,7 +200,9 @@ export class BattleScene extends Phaser.Scene {
       v.body.destroy();
       v.gun.destroy();
       v.label.destroy();
+      v.hpText.destroy();
       v.hpBar.destroy();
+      v.shadow.destroy();
     }
     this.views = [];
     for (const s of this.projSprites.values()) {
@@ -191,6 +215,8 @@ export class BattleScene extends Phaser.Scene {
     this.ambient?.destroy();
     this.ambient = null;
     this.liquidTiles = [];
+    for (const tm of this.spaceTimers) tm.remove();
+    this.spaceTimers = [];
     audio.whistleStop();
   }
 
@@ -203,17 +229,19 @@ export class BattleScene extends Phaser.Scene {
       const img = this.add.image(0, 0, key).setOrigin(0).setDepth(depth);
       this.bgImages.push({ img, factor: l.factor, y: l.y, kind: 'layer' });
     };
-    if (info.backdrop) {
+    if (info.id === 'moon_base') {
+      this.buildSpace(seed);
+    } else if (info.backdrop) {
       // 레퍼런스 일러스트 배경 (먼 층)
       const f = 0.12;
       const w = VIEW_W + (g.worldW - VIEW_W) * f + 4;
       const fy = f * 0.6;
-      const h = VIEW_H + (g.worldH - VIEW_H - CAM_TOP) * fy + 4;
+      const h = VIEW_H + (g.worldH + CAM_EXTRA - VIEW_H - CAM_TOP) * fy + 4;
       const src = this.textures.get(`bg_${info.backdrop}`).getSourceImage() as HTMLImageElement;
       const sc = Math.max(w / src.width, h / src.height);
       const img = this.add.image(0, 0, `bg_${info.backdrop}`).setOrigin(0).setDepth(-100).setScale(sc);
       this.bgImages.push({ img, factor: f, y: CAM_TOP * fy, kind: 'layer' });
-      if (info.id === 'ice_peaks') addLayer(buildPineLayer(VIEW_W, VIEW_H, g.worldW, g.worldH, CAM_TOP, seed), `bg_pine_${seed}`, -90);
+      if (info.id === 'ice_peaks') addLayer(buildPineLayer(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed), `bg_pine_${seed}`, -90);
     } else {
       const skyKey = `bg_sky_${theme}`;
       if (!this.textures.exists(skyKey)) this.textures.addCanvas(skyKey, skyCanvas(VIEW_W, VIEW_H, theme));
@@ -227,10 +255,10 @@ export class BattleScene extends Phaser.Scene {
       }
       const layers =
         theme === 'volcano'
-          ? buildVolcanoLayers(VIEW_W, VIEW_H, g.worldW, g.worldH, CAM_TOP, seed)
+          ? buildVolcanoLayers(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed)
           : theme === 'sky'
-            ? buildSkyLayers(VIEW_W, VIEW_H, g.worldW, g.worldH, CAM_TOP, seed)
-            : buildForestLayers(VIEW_W, VIEW_H, g.worldW, g.worldH, CAM_TOP, seed);
+            ? buildSkyLayers(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed)
+            : buildForestLayers(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed);
       layers.forEach((l, i) => addLayer(l, `bg_layer_${info.id}_${seed}_${i}`, -90 + i));
     }
     for (const b of this.bgImages) this.worldObjs.push(b.img);
@@ -250,7 +278,7 @@ export class BattleScene extends Phaser.Scene {
         ctx.fillRect(0, 0, 4, 120);
         this.textures.addCanvas(abyssKey, c);
       }
-      const ab = this.add.image(0, g.worldH - 120, abyssKey).setOrigin(0).setDisplaySize(g.worldW, 120).setDepth(-5);
+      const ab = this.add.image(0, g.worldH - 120, abyssKey).setOrigin(0).setDisplaySize(g.worldW, 120 + CAM_EXTRA).setDepth(-5);
       this.worldObjs.push(ab);
     }
     // 분위기 파티클
@@ -274,11 +302,123 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private liquidTiles: Phaser.GameObjects.TileSprite[] = [];
+  private spaceTimers: Phaser.Time.TimerEvent[] = [];
+
+  /** 우주 배경: 원경(성운·별) → 지구 → 소행성(3층) → 우주정거장, 모두 패럴랙스 */
+  private buildSpace(seed: number) {
+    const g = this.game2;
+    const layerSize = (f: number) => ({
+      w: Math.ceil(VIEW_W + (g.worldW - VIEW_W) * f) + 4,
+      h: Math.ceil(VIEW_H + (g.worldH + CAM_EXTRA - VIEW_H - CAM_TOP) * f * 0.6) + 4,
+    });
+    const tex = (key: string, make: () => HTMLCanvasElement) => {
+      if (!this.textures.exists(key)) this.textures.addCanvas(key, make());
+      return key;
+    };
+    // 1) 성운 + 별
+    const nf = 0.03;
+    const ns = layerSize(nf);
+    const nk = tex(`sp_neb_${seed}`, () => nebulaCanvas(ns.w, ns.h, seed));
+    this.bgImages.push({ img: this.add.image(0, 0, nk).setOrigin(0).setDepth(-100), factor: nf, y: CAM_TOP * nf * 0.6, kind: 'layer' });
+    // 반짝이는 별
+    const rng = new Phaser.Math.RandomDataGenerator([String(seed)]);
+    for (let i = 0; i < 46; i++) {
+      const st = this.add.image(0, 0, 'fx_dot').setDepth(-99).setBlendMode(Phaser.BlendModes.ADD).setScale(rng.realInRange(0.25, 0.6)).setTint(rng.pick([0xffffff, 0xcfe0ff, 0xffe8c8]));
+      this.bgImages.push({ img: st, factor: nf, y: CAM_TOP * nf * 0.6, kind: 'layer', ox: rng.between(0, ns.w), oy: rng.between(0, ns.h * 0.8) });
+      this.tweens.add({ targets: st, alpha: { from: 1, to: 0.15 }, duration: rng.between(700, 2200), yoyo: true, repeat: -1, delay: rng.between(0, 2000) });
+    }
+    // 2) 지구 (대기광 포함)
+    const ek = tex('sp_earth', () => earthCanvas(104, 4242));
+    this.bgImages.push({ img: this.add.image(0, 0, ek).setOrigin(0).setDepth(-97), factor: 0.06, y: CAM_TOP * 0.036, kind: 'layer', ox: 250, oy: 40, bob: 2, bobSpeed: 0.15 });
+    // 3) 소행성 3층: 멀수록 작고 어둡고 느리게
+    const groups: { f: number; n: number; min: number; max: number; tint: number; depth: number; yMax: number }[] = [
+      { f: 0.08, n: 9, min: 12, max: 26, tint: 0x8a8ab0, depth: -96, yMax: 0.55 },
+      { f: 0.18, n: 6, min: 28, max: 54, tint: 0xc0c0dc, depth: -94, yMax: 0.5 },
+      { f: 0.42, n: 3, min: 70, max: 100, tint: 0x9090b8, depth: -88, yMax: 0.35 },
+    ];
+    let ai = 0;
+    for (const gr of groups) {
+      const ls = layerSize(gr.f);
+      for (let k = 0; k < gr.n; k++) {
+        const size = rng.between(gr.min, gr.max);
+        const key = tex(`sp_ast_${size}_${ai % 7}`, () => asteroidCanvas(size, 900 + ai * 13));
+        const img = this.add.image(0, 0, key).setDepth(gr.depth).setTint(gr.tint).setRotation(rng.realInRange(0, 6.28));
+        this.bgImages.push({
+          img,
+          factor: gr.f,
+          y: CAM_TOP * gr.f * 0.6,
+          kind: 'layer',
+          ox: rng.between(40, ls.w - 40),
+          oy: rng.between(30, Math.round(ls.h * gr.yMax)),
+          bob: rng.realInRange(3, 8),
+          bobSpeed: rng.realInRange(0.2, 0.5),
+          phase: rng.realInRange(0, 6.28),
+          spin: rng.realInRange(-0.06, 0.06),
+        });
+        ai++;
+      }
+    }
+    // 4) 우주정거장 + 깜빡이는 조명
+    const sf = 0.22;
+    const ss = layerSize(sf);
+    const sk = tex('sp_station', () => stationCanvas(77));
+    const sox = Math.round(ss.w * 0.66),
+      soy = 110;
+    this.bgImages.push({ img: this.add.image(0, 0, sk).setOrigin(0).setDepth(-92), factor: sf, y: CAM_TOP * sf * 0.6, kind: 'layer', ox: sox, oy: soy });
+    for (const [lx, ly, col] of [[149, 1, 0xff5a5a], [243, 30, 0x5ec8ff], [10, 112, 0xffd48a], [260, 62, 0xff5a5a], [100, 150, 0x5ec8ff]] as const) {
+      const l = this.add.image(0, 0, 'fx_soft').setDepth(-91).setBlendMode(Phaser.BlendModes.ADD).setTint(col).setScale(0.18);
+      this.bgImages.push({ img: l, factor: sf, y: CAM_TOP * sf * 0.6, kind: 'layer', ox: sox + lx, oy: soy + ly });
+      this.tweens.add({ targets: l, alpha: { from: 1, to: 0.1 }, duration: 600 + lx * 3, yoyo: true, repeat: -1 });
+    }
+    for (const b of this.bgImages) this.worldObjs.push(b.img);
+    // 5) 별똥별과 지나가는 우주선 (가끔)
+    const shipKey = tex('sp_ship', shipCanvas);
+    this.spaceTimers.push(
+      this.time.addEvent({
+        delay: 5200,
+        loop: true,
+        callback: () => {
+          const v = this.cameras.main.worldView;
+          const x = v.x + rng.between(100, VIEW_W - 100),
+            y = v.y + rng.between(20, 160);
+          const gfx = this.add.graphics().setDepth(-90).setBlendMode(Phaser.BlendModes.ADD);
+          const st = { t: 0 };
+          this.tweens.add({
+            targets: st,
+            t: 1,
+            duration: 700,
+            onUpdate: () => {
+              gfx.clear();
+              const hx = x + st.t * 160,
+                hy = y + st.t * 60;
+              for (let k = 0; k < 10; k++) {
+                gfx.fillStyle(0xffffff, (1 - k / 10) * (1 - st.t) * 0.9);
+                gfx.fillRect(hx - k * 5, hy - k * 1.9, 2, 1);
+              }
+            },
+            onComplete: () => gfx.destroy(),
+          });
+        },
+      }),
+      this.time.addEvent({
+        delay: 14000,
+        loop: true,
+        callback: () => {
+          const v = this.cameras.main.worldView;
+          const dir = rng.pick([1, -1]);
+          const y = v.y + rng.between(60, 200);
+          const ship = this.add.image(dir > 0 ? v.x - 40 : v.right + 40, y, shipKey).setDepth(-89).setFlipX(dir < 0);
+          this.tweens.add({ targets: ship, x: dir > 0 ? v.right + 60 : v.x - 60, y: y - 30, duration: 9000, onComplete: () => ship.destroy() });
+        },
+      }),
+    );
+  }
+
 
   /** 물/용암: 맵 전체 폭의 반투명 띠 + 출렁이는 수면 */
   private buildLiquid(ly: number, kind: 'water' | 'ice_water' | 'lava') {
     const g = this.game2;
-    const h = g.worldH - ly + 40;
+    const h = g.worldH + CAM_EXTRA - ly + 40;
     const key = `liq_${kind}_${h}`;
     const pal =
       kind === 'lava'
@@ -320,15 +460,26 @@ export class BattleScene extends Phaser.Scene {
 
   private makeCharView(p: Player): CharView {
     const body = this.add.image(p.x, p.y, `char_${p.charType}`).setOrigin(0.5, 1).setDepth(10).setScale(CHAR_SCALE);
-    const gun = this.add.image(p.x, p.y - MUZZLE_HEIGHT, `gun_${p.charType}`).setOrigin(GUN_PIVOT_X / GUN_W, GUN_PIVOT_Y / GUN_H).setDepth(11);
-    const teamColor = p.team === 0 ? '#7fd4ff' : '#ff9a9a';
+    const gun = this.add
+      .image(p.x, p.y - MUZZLE_HEIGHT, `gun_${p.charType}`)
+      .setOrigin(GUN_PIVOT_X / GUN_W, GUN_PIVOT_Y / GUN_H)
+      .setDepth(11)
+      .setScale(GUN_SCALE);
+    // 발밑 접지 그림자
+    const shadow = this.add.image(p.x, p.y, 'fx_soft').setDepth(9).setTint(0x000000).setAlpha(0.42).setScale(0.62, 0.14);
+    const font = '"Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif';
     const label = this.add
-      .text(p.x, p.y - 72, p.name, { fontFamily: '"Noto Sans KR", sans-serif', fontSize: '8px', fontStyle: 'bold', color: teamColor, stroke: '#0b0814', strokeThickness: 3 })
-      .setOrigin(0.5, 1)
-      .setDepth(40)
-      .setResolution(4);
+      .text(p.x, p.y, p.name.split(' · ').pop()!, { fontFamily: font, fontSize: '8px', fontStyle: 'bold', color: '#ffffff' })
+      .setOrigin(0.5, 0)
+      .setDepth(41)
+      .setResolution(6);
+    const hpText = this.add
+      .text(p.x, p.y, '100 / 100', { fontFamily: font, fontSize: '7px', fontStyle: 'bold', color: '#d6e6ff' })
+      .setOrigin(0.5, 0)
+      .setDepth(41)
+      .setResolution(6);
     const hpBar = this.add.graphics().setDepth(40);
-    return { body, gun, label, hpBar, shownHp: p.hp, lastX: p.x, walkDist: 0, hitTimer: 0, shootTimer: 0, blinkTimer: 0, knock: 0, fallen: false };
+    return { body, gun, label, hpText, hpBar, shadow, shownHp: p.hp, lastX: p.x, walkDist: 0, hitTimer: 0, shootTimer: 0, blinkTimer: 0, knock: 0, fallen: false };
   }
 
   // ───────────────────────── 입력 ─────────────────────────
@@ -616,7 +767,7 @@ export class BattleScene extends Phaser.Scene {
       }
       case 'death': {
         const p = g.players[e.player];
-        this.fx.bigText(p.x, Math.min(p.y, g.map.liquidY ?? p.y) - 80, e.cause === 'fall' ? '추락!' : e.cause === 'liquid' ? (g.map.liquid === 'lava' ? '용암 낙하!' : '풍덩!') : 'K.O.!', '#ff6b6b');
+        this.fx.bigText(p.x, Math.min(p.y, g.map.liquidY ?? p.y) - 100, e.cause === 'fall' ? '추락!' : e.cause === 'liquid' ? (g.map.liquid === 'lava' ? '용암 낙하!' : '풍덩!') : 'K.O.!', '#ff6b6b');
         if (e.cause === 'liquid') this.fx.splash(p.x, g.map.liquidY!, g.map.liquid === 'lava');
         break;
       }
@@ -636,7 +787,7 @@ export class BattleScene extends Phaser.Scene {
         if (sfx) audio.land();
         break;
       case 'timeout':
-        this.fx.bigText(g.players[e.player].x, g.players[e.player].y - 80, '시간 초과', '#ffd23f');
+        this.fx.bigText(g.players[e.player].x, g.players[e.player].y - 100, '시간 초과', '#ffd23f');
         break;
       case 'gameOver': {
         this.overTimer = 2.2;
@@ -736,23 +887,37 @@ export class BattleScene extends Phaser.Scene {
         const rx = p.facing * cosDeg(Math.round(p.angle)) * recoil;
         const ry = -sinDeg(Math.round(p.angle)) * recoil;
         v.gun.setPosition(Math.round(bx + rx + p.facing * 2), Math.round(by - MUZZLE_HEIGHT + ry));
-        v.gun.setScale(p.facing, 1);
+        v.gun.setScale(p.facing * GUN_SCALE, GUN_SCALE);
         v.gun.setRotation(p.facing === 1 ? -ang : ang);
       }
-      // 이름/체력바
+      // 접지 그림자
+      const ground = p.alive && !fell ? this.game2.terrain.surfaceBelow(p.x, p.y - 2) : -1;
+      const gap = ground >= 0 ? ground - p.y : 999;
+      v.shadow.setVisible(gap < 60 && !fell);
+      if (gap < 60) v.shadow.setPosition(Math.round(p.x), ground + 1).setAlpha(0.42 * (1 - gap / 60)).setScale(0.62 * (1 - gap / 120), 0.14);
+      // 이름판 + 체력바 (발밑, 이미지1 스타일)
       v.shownHp += (p.hp - v.shownHp) * Math.min(1, dt * 6);
-      const ly = by - 66;
-      v.label.setPosition(Math.round(bx), Math.round(ly - 4)).setVisible(p.alive);
+      const show = p.alive && !fell;
+      v.label.setVisible(show);
+      v.hpText.setVisible(show);
       v.hpBar.clear();
-      if (p.alive) {
-        const w = 30,
-          hx = Math.round(bx - w / 2),
-          hy = Math.round(ly - 2);
-        v.hpBar.fillStyle(0x0b0814, 0.85).fillRect(hx - 1, hy - 1, w + 2, 5);
-        v.hpBar.fillStyle(0xffffff, 0.6).fillRect(hx, hy, (w * v.shownHp) / 100, 3);
-        const col = p.hp > 50 ? 0x5ef08a : p.hp > 25 ? 0xffd23f : 0xff5a5a;
-        v.hpBar.fillStyle(col, 1).fillRect(hx, hy, (w * p.hp) / 100, 3);
-        v.hpBar.fillStyle(0xffffff, 0.35).fillRect(hx, hy, (w * p.hp) / 100, 1);
+      if (show) {
+        const pw = 56,
+          px0 = Math.round(p.x - pw / 2),
+          py0 = Math.round(by + 9);
+        const team = p.team === 0 ? 0x3b82f6 : 0xef4444;
+        // 체력바
+        v.hpBar.fillStyle(0x06101f, 0.95).fillRect(px0 + 2, py0 - 6, pw - 4, 5);
+        v.hpBar.fillStyle(0xffffff, 0.55).fillRect(px0 + 3, py0 - 5, ((pw - 6) * v.shownHp) / 100, 3);
+        const col = p.hp > 50 ? 0x3ee06a : p.hp > 25 ? 0xffd23f : 0xff4d5e;
+        v.hpBar.fillStyle(col, 1).fillRect(px0 + 3, py0 - 5, ((pw - 6) * p.hp) / 100, 3);
+        v.hpBar.fillStyle(0xffffff, 0.45).fillRect(px0 + 3, py0 - 5, ((pw - 6) * p.hp) / 100, 1);
+        // 남색 이름판
+        v.hpBar.fillStyle(0x0a1838, 0.94).fillRoundedRect(px0, py0, pw, 21, 3);
+        v.hpBar.lineStyle(1, 0x4f8dff, 1).strokeRoundedRect(px0 + 0.5, py0 + 0.5, pw - 1, 20, 3);
+        v.hpBar.fillStyle(team, 1).fillRect(px0 + 3, py0 + 3, 2, 15);
+        v.label.setPosition(Math.round(p.x + 2), py0 + 1);
+        v.hpText.setText(`${p.hp} / 100`).setPosition(Math.round(p.x + 2), py0 + 11);
       }
     });
     // 현재 턴 표시 + 조준선
@@ -762,7 +927,7 @@ export class BattleScene extends Phaser.Scene {
     const showMarker = (g.phase === 'aiming' || g.phase === 'turnStart') && cp.alive;
     this.marker.setVisible(showMarker);
     if (showMarker) {
-      this.marker.setPosition(Math.round(cp.x), Math.round(cv.body.y - 80 + Math.sin(t * 5) * 2.5));
+      this.marker.setPosition(Math.round(cp.x), Math.round(cv.body.y - 92 + Math.sin(t * 5) * 2.5));
       if (g.phase === 'aiming') {
         const a = Math.round(cp.angle);
         const ox = cp.x,
@@ -801,7 +966,9 @@ export class BattleScene extends Phaser.Scene {
         (b.img as Phaser.GameObjects.TileSprite).tilePositionX = vx * b.factor + t * 4;
       } else {
         const fy = b.factor * 0.6;
-        b.img.setPosition(vx * (1 - b.factor), vy * (1 - fy) + CAM_TOP * fy);
+        const bob = b.bob ? Math.sin(t * (b.bobSpeed ?? 0.3) + (b.phase ?? 0)) * b.bob : 0;
+        b.img.setPosition(vx * (1 - b.factor) + (b.ox ?? 0), vy * (1 - fy) + CAM_TOP * fy + (b.oy ?? 0) + bob);
+        if (b.spin) b.img.rotation += b.spin * 0.016;
       }
     }
   }
@@ -816,7 +983,7 @@ export class BattleScene extends Phaser.Scene {
       case 'player': {
         const p = g.currentPlayer;
         tx = p.x;
-        ty = p.y - 70;
+        ty = p.y + 10; // 하단 UI를 피해 캐릭터를 화면 위쪽 중앙에
         speed = 4;
         break;
       }
@@ -824,7 +991,7 @@ export class BattleScene extends Phaser.Scene {
         const pr = g.projectiles[0];
         if (pr) {
           tx = pr.x + pr.vx * 0.22;
-          ty = pr.y + pr.vy * 0.18;
+          ty = pr.y + pr.vy * 0.18 + 50;
           speed = 7;
         } else {
           tx = this.camPoint.x;
@@ -834,7 +1001,7 @@ export class BattleScene extends Phaser.Scene {
       }
       case 'point':
         tx = this.camPoint.x;
-        ty = this.camPoint.y - 30;
+        ty = this.camPoint.y + 40;
         this.camHold -= dt;
         speed = 6;
         if (this.camHold < 0 && g.projectiles.length > 0) this.camMode = 'projectile';
@@ -854,7 +1021,7 @@ export class BattleScene extends Phaser.Scene {
   private applyCamera() {
     const g = this.game2;
     this.camX = Phaser.Math.Clamp(this.camX, VIEW_W / 2, g.worldW - VIEW_W / 2);
-    this.camY = Phaser.Math.Clamp(this.camY, CAM_TOP + VIEW_H / 2, g.worldH - VIEW_H / 2);
+    this.camY = Phaser.Math.Clamp(this.camY, CAM_TOP + VIEW_H / 2, g.worldH + CAM_EXTRA - VIEW_H / 2);
     // centerOn과 동일: scroll = center - (캔버스 크기)/2
     const cam = this.cameras.main;
     cam.scrollX = this.camX - cam.width / 2;
@@ -863,6 +1030,13 @@ export class BattleScene extends Phaser.Scene {
 
   private weaponColor(w: WeaponId, owner: CharTypeId): string {
     return WEAPONS[w].color ?? CHAR_TYPES[owner].palette.accent;
+  }
+
+  /** 미니맵 클릭 등으로 특정 지점 보기 */
+  lookAt(x: number, y: number) {
+    this.camMode = 'free';
+    this.camX = x;
+    this.camY = y;
   }
 
   /** 미니맵/HUD용 */

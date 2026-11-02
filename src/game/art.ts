@@ -3,8 +3,11 @@
 import type { CharTypeDef, GunStyle } from '../core/characters';
 import type { ProjLook } from '../core/weapons';
 
-/** 캐릭터 PNG: 높이 120px 텍스처를 0.5배로 표시 → 월드 60px (줌 2에서 화면 1:1 픽셀) */
-export const CHAR_SCALE = 0.5;
+/** 캐릭터 PNG: 높이 240px 텍스처를 1/3배로 표시 → 월드 80px (선형 필터링) */
+export const CHAR_SCALE = 1 / 3;
+/** 무기 텍스처는 논리 픽셀을 3배로 그려 0.5배로 표시 → 논리 1px = 월드 1.5px (기존 대비 1.5배) */
+export const GUN_RES = 3;
+export const GUN_SCALE = 0.5;
 export const GUN_W = 48;
 export const GUN_H = 20;
 export const GUN_PIVOT_X = 12;
@@ -47,7 +50,9 @@ const METAL_L = '#aab8d0';
 /** 무기 + 앞팔. (GUN_PIVOT_X, GUN_PIVOT_Y) = 어깨 회전축, 오른쪽이 포구 */
 export function drawGun(ctx: Ctx, style: GunStyle, pal: CharTypeDef['palette']) {
   const { accent: A, accentDark: D, accentLight: L, glow: G } = pal;
-  ctx.clearRect(0, 0, GUN_W, GUN_H);
+  ctx.clearRect(0, 0, GUN_W * GUN_RES, GUN_H * GUN_RES);
+  ctx.save();
+  ctx.scale(GUN_RES, GUN_RES);
   const cy = GUN_PIVOT_Y;
   switch (style) {
     case 'bazooka':
@@ -186,6 +191,7 @@ export function drawGun(ctx: Ctx, style: GunStyle, pal: CharTypeDef['palette']) 
   px(ctx, 8, cy + 3, 10, 1, COAT_SH);
   px(ctx, 17, cy + 1, 5, 5, SKIN);
   px(ctx, 17, cy + 5, 5, 1, SKIN_SH);
+  ctx.restore();
 }
 
 // ───────────────────────── 색 유틸 ─────────────────────────

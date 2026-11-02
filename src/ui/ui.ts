@@ -1,5 +1,5 @@
 import { CHAR_LIST, CHAR_TYPES, type CharTypeId } from '../core/characters';
-import { MAX_GAUGE, MOVE_PER_TURN, TICK_RATE, WIND_MAX } from '../core/constants';
+import { MAX_GAUGE, MOVE_PER_TURN, TICK_RATE } from '../core/constants';
 import type { AiLevel, Game, GameEvent, PlayerSetup } from '../core/game';
 import { MAP_INFO, MAP_LIST, type MapId } from '../core/mapgen';
 import { audio } from '../game/audio';
@@ -248,39 +248,67 @@ export class UI {
     setTimeout(() => b.remove(), 1500);
   }
 
-  // ───────────── HUD ─────────────
+  // ───────────── HUD (이미지1 스타일: 네이비 패널 + 하단 조작 바) ─────────────
+  private minimapBase: ImageData | null = null;
+  private minimapVersion = -1;
+
   private buildHud() {
     this.removeHud();
     const el = h(`
       <div id="hud">
-        <div class="hud-top">
+        <div class="h-tl">
+          <div class="np wind"><span class="ic">💨</span><span class="lb">바람</span><b class="wv">0</b></div>
+          <div class="np mapn"><span class="ic">🗺</span><b class="mn">-</b></div>
           <div class="pcards"></div>
-          <div class="turnbox"><div class="rd">ROUND 1</div><div class="who">-</div><div class="tm">30</div></div>
-          <div class="rightbox">
-            <div class="iconbtns">
-              <button class="ibtn" data-a="full" title="전체화면">⛶</button>
-              <button class="ibtn" data-a="settings" title="설정 (Esc)">⚙</button>
+        </div>
+        <div class="np h-turn"><div class="who">-</div><div class="sub"><span class="tn">TURN 1</span><i></i><span class="ts">30초</span></div></div>
+        <div class="h-tr">
+          <div class="np mini"><canvas width="240" height="104"></canvas></div>
+          <div class="ibtns"><button class="np ibtn" data-a="full" title="전체화면">⛶</button><button class="np ibtn" data-a="settings" title="설정 (Esc)">⚙</button></div>
+        </div>
+        <div class="h-bottom">
+          <div class="np dialp">
+            <button class="tb aup" data-t="up" title="각도 올리기 (↑/W)">▲</button>
+            <svg class="dial" viewBox="0 0 120 70">
+              <path d="M10 62 A52 52 0 0 1 112 62" class="arc"/>
+              ${Array.from({ length: 10 }, (_, i) => {
+                const a = (i / 9) * Math.PI;
+                const x1 = 61 - Math.cos(a) * 52, y1 = 62 - Math.sin(a) * 52, x2 = 61 - Math.cos(a) * 45, y2 = 62 - Math.sin(a) * 45;
+                return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="tick"/>`;
+              }).join('')}
+              <line x1="61" y1="62" x2="105" y2="62" class="needle"/>
+              <circle cx="61" cy="62" r="5" class="hub"/>
+            </svg>
+            <button class="tb adn" data-t="down" title="각도 내리기 (↓/S)">▼</button>
+            <div class="dlabel">각도 <b class="av">45°</b></div>
+            <div class="moves"><button class="tb" data-t="left" title="왼쪽 이동 (←/A)">◀</button><span>이동</span><button class="tb" data-t="right" title="오른쪽 이동 (→/D)">▶</button></div>
+          </div>
+          <div class="midp">
+            <div class="row1">
+              <div class="np slots">
+                <button class="slot1 on" data-w="basic"><kbd>1</kbd><span class="ic">💊</span><span class="nm">기본탄</span><small>∞</small></button>
+                <button class="slot1" data-w="special"><kbd>2</kbd><span class="ic">✨</span><span class="nm spn">필살기</span><small class="spg">0%</small><i class="charge"></i></button>
+              </div>
+              <div class="np timep"><span>TIME</span><b class="tm">30</b></div>
             </div>
-            <div class="wind"><div class="lb">바람</div><div class="meter"></div></div>
+            <div class="np bars">
+              <div class="br hp"><span class="ic">💚</span><span class="lb">체력</span><div class="trk"><i class="ghost"></i><i class="fill"></i></div><b class="num">100 / 100</b></div>
+              <div class="br pw"><span class="ic">🔥</span><span class="lb">파워</span><div class="trk"><i class="fill"></i><i class="last"></i></div><b class="num">0 %</b></div>
+              <div class="br mv"><span class="ic">👟</span><span class="lb">이동</span><div class="trk"><i class="fill"></i></div><b class="num">140 / 140</b></div>
+            </div>
+          </div>
+          <div class="rightp">
+            <div class="row1">
+              <button class="np sbtn" data-a="skip">턴 넘기기</button>
+              <button class="np sbtn" data-a="settings">설정</button>
+              <button class="np sbtn" data-a="quit">나가기</button>
+            </div>
+            <button class="firebtn" data-t="fire"><span class="burst">✸</span><span class="t"><b>무기발사</b><small>FIRE · 길게 눌렀다 떼기</small></span></button>
           </div>
         </div>
-        <div class="hud-bottom">
-          <div class="blk move"><div class="lb">이동</div><div class="bar"><i class="fill"></i></div></div>
-          <div class="blk angle"><div class="lb">각도</div><div class="v">45°</div></div>
-          <div class="blk power"><div class="lb">파워 <span style="opacity:.7">(${document.body.classList.contains('is-touch') ? '발사 버튼' : '스페이스'} 누르고 떼기)</span></div>
-            <div class="pgauge"><i class="fill"></i><i class="last"></i><span class="num">0</span></div></div>
-          <div class="weapons">
-            <button class="wbtn on" data-w="basic"><kbd>1</kbd><span class="ic">💊</span>기본탄</button>
-            <button class="wbtn" data-w="special"><kbd>2</kbd><span class="ic">✨</span><span class="spn">필살기</span><i class="charge"></i></button>
-            <button class="wbtn" data-a="skip"><span class="ic">⏭</span>넘기기</button>
-          </div>
-        </div>
-        <div class="touch l"><button class="tbtn" data-t="left">◀</button><button class="tbtn" data-t="right">▶</button></div>
-        <div class="touch r"><div class="tcol"><button class="tbtn" data-t="up">▲</button><button class="tbtn" data-t="down">▼</button></div><button class="tbtn fire" data-t="fire">발사</button></div>
       </div>`);
-    // 바람 미터
-    const meter = el.querySelector('.wind .meter')!;
-    meter.innerHTML = `${'<i></i>'.repeat(WIND_MAX)}<b>0</b>${'<i></i>'.repeat(WIND_MAX)}`;
+    const meter = el.querySelector('.wind')!;
+    void meter;
     el.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
       const w = t.closest('[data-w]')?.getAttribute('data-w') as 'basic' | 'special' | undefined;
@@ -289,8 +317,19 @@ export class UI {
       if (a === 'skip') this.scene.skipTurn();
       if (a === 'settings') this.toggleSettings(true);
       if (a === 'full') this.toggleFullscreen();
+      if (a === 'quit') {
+        audio.click();
+        this.showTitle();
+      }
     });
-    // 터치 버튼: 누르고 있는 동안 동작
+    // 미니맵 클릭 → 그 지점 보기
+    const mc = el.querySelector('.mini canvas') as HTMLCanvasElement;
+    mc.addEventListener('pointerdown', (ev) => {
+      const r = mc.getBoundingClientRect();
+      const g = this.scene.game2;
+      this.scene.lookAt(((ev.clientX - r.left) / r.width) * g.worldW, ((ev.clientY - r.top) / r.height) * g.worldH);
+    });
+    // 누르고 있는 동안 동작하는 버튼 (마우스/터치 공통)
     el.querySelectorAll<HTMLElement>('[data-t]').forEach((b) => {
       const t = b.dataset.t!;
       const down = (ev: PointerEvent) => {
@@ -311,6 +350,7 @@ export class UI {
       };
       const up = (ev: PointerEvent) => {
         ev.preventDefault();
+        if (!b.classList.contains('press')) return;
         b.classList.remove('press');
         if (t === 'left' || t === 'right') this.scene.setTouchMove(0);
         if (t === 'up' || t === 'down') this.scene.setTouchAim(0);
@@ -324,6 +364,7 @@ export class UI {
     });
     this.root.appendChild(el);
     this.hud = el;
+    this.minimapVersion = -1;
     const loop = () => {
       this.updateHud();
       this.raf = requestAnimationFrame(loop);
@@ -340,16 +381,86 @@ export class UI {
     this.scene.paused = false;
   }
 
+  private drawMinimap(canvas: HTMLCanvasElement, g: Game) {
+    const ctx = canvas.getContext('2d')!;
+    const W = canvas.width,
+      H = canvas.height;
+    if (this.minimapVersion !== g.terrain.version || !this.minimapBase) {
+      // 지형 축소본 (변경 시에만 재계산)
+      const img = ctx.createImageData(W, H);
+      const d = img.data;
+      const sx = g.worldW / W,
+        sy = g.worldH / H;
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          let solid = 0;
+          for (let k = 0; k < 3; k++) if (g.terrain.solidAt(Math.floor((x + 0.25 + k * 0.25) * sx), Math.floor((y + 0.5) * sy))) solid++;
+          const i = (y * W + x) * 4;
+          const liquid = g.map.liquidY !== null && (y + 0.5) * sy > g.map.liquidY;
+          if (solid >= 2) {
+            const top = !g.terrain.solidAt(Math.floor((x + 0.5) * sx), Math.floor((y - 1) * sy));
+            d[i] = top ? 190 : 120;
+            d[i + 1] = top ? 200 : 128;
+            d[i + 2] = top ? 220 : 150;
+            d[i + 3] = 255;
+          } else if (liquid) {
+            const lava = g.map.liquid === 'lava';
+            d[i] = lava ? 220 : 40;
+            d[i + 1] = lava ? 90 : 120;
+            d[i + 2] = lava ? 30 : 200;
+            d[i + 3] = 255;
+          } else {
+            d[i] = 10;
+            d[i + 1] = 22;
+            d[i + 2] = 52;
+            d[i + 3] = 255;
+          }
+        }
+      this.minimapBase = img;
+      this.minimapVersion = g.terrain.version;
+    }
+    ctx.putImageData(this.minimapBase, 0, 0);
+    const sx = W / g.worldW,
+      sy = H / g.worldH;
+    // 카메라 시야
+    const cc = this.scene.cameraCenter;
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(Math.round((cc.x - 480) * sx) + 0.5, Math.round((cc.y - 270) * sy) + 0.5, Math.round(960 * sx), Math.round(540 * sy));
+    // 포탄
+    ctx.fillStyle = '#fff6a0';
+    for (const pr of g.projectiles) ctx.fillRect(Math.round(pr.x * sx) - 1, Math.round(pr.y * sy) - 1, 3, 3);
+    // 플레이어
+    const blink = Math.floor(performance.now() / 300) % 2 === 0;
+    g.players.forEach((p, i) => {
+      if (!p.alive) return;
+      const x = Math.round(p.x * sx),
+        y = Math.round(p.y * sy);
+      ctx.fillStyle = p.team === 0 ? '#4ea1ff' : '#ff5a6a';
+      ctx.fillRect(x - 3, y - 7, 6, 7);
+      if (i === g.current && blink) {
+        ctx.strokeStyle = '#ffd23f';
+        ctx.strokeRect(x - 4.5, y - 8.5, 9, 10);
+      }
+    });
+  }
+
   private updateHud() {
     const g = this.scene.game2;
     const el = this.hud;
     if (!g || !el) return;
-    // 플레이어 카드
+    const cp = g.currentPlayer;
+    const local = this.scene.isLocalTurn();
+    // 좌상단: 바람/맵/플레이어
+    const wv = el.querySelector('.wv') as HTMLElement;
+    wv.textContent = g.wind === 0 ? (g.map.windScale === 0 ? '0 (무풍)' : '0') : `${g.wind > 0 ? '' : '← '}${Math.abs(g.wind)}${g.wind > 0 ? ' →' : ''}`;
+    wv.classList.toggle('strong', Math.abs(g.wind) >= 7);
+    (el.querySelector('.mn') as HTMLElement).textContent = `${g.map.icon} ${g.map.name}`;
     const pc = el.querySelector('.pcards')!;
     if (pc.childElementCount !== g.players.length) {
       pc.innerHTML = g.players
         .map(
-          (p) => `<div class="pcard"><div class="face" style="background-image:url(${portrait(p.charType)});--tc:${p.team === 0 ? '#7fd4ff' : '#ff9a9a'}"></div>
+          (p) => `<div class="pcard np"><div class="face" style="background-image:url(${portrait(p.charType)});--tc:${p.team === 0 ? '#4ea1ff' : '#ff5a6a'}"></div>
           <div class="info"><div class="nm"><span>${p.name}</span><small class="hpn">100</small></div>
           <div class="bar hp"><i class="ghost"></i><i class="fill"></i></div><div class="bar sp"><i class="fill"></i></div></div></div>`,
         )
@@ -369,36 +480,27 @@ export class UI {
       sp.classList.toggle('full', p.gauge >= MAX_GAUGE);
       setW(sp.querySelector('.fill'), p.gauge);
     });
-    // 턴 정보
-    const cp = g.currentPlayer;
-    el.querySelector('.turnbox .rd')!.textContent = `ROUND ${g.round}`;
-    el.querySelector('.turnbox .who')!.textContent = g.phase === 'over' ? '경기 종료' : cp.name;
+    // 상단 중앙: 턴
     const sec = Math.max(0, Math.ceil(g.turnTicksLeft / TICK_RATE));
-    const tm = el.querySelector('.turnbox .tm') as HTMLElement;
-    tm.textContent = g.phase === 'aiming' || g.phase === 'turnStart' ? String(sec) : '—';
-    tm.classList.toggle('warn', g.phase === 'aiming' && sec <= 5);
-    // 바람
-    const meter = el.querySelector('.wind .meter')!;
-    const cells = meter.querySelectorAll('i');
-    cells.forEach((c, k) => {
-      const on = g.wind < 0 ? k < WIND_MAX && k >= WIND_MAX + g.wind : k >= WIND_MAX && k < WIND_MAX + g.wind;
-      c.classList.toggle('on', on);
-    });
-    meter.querySelector('b')!.textContent = g.wind === 0 ? '0' : `${g.wind < 0 ? '◀' : ''}${Math.abs(g.wind)}${g.wind > 0 ? '▶' : ''}`;
-    // 하단 바
-    const local = this.scene.isLocalTurn();
-    const bottom = el.querySelector('.hud-bottom') as HTMLElement;
-    bottom.classList.toggle('idle', !(local && g.canControl));
-    setW(el.querySelector('.move .fill'), (cp.moveLeft / MOVE_PER_TURN) * 100);
-    el.querySelector('.angle .v')!.textContent = `${Math.round(cp.angle)}°`;
-    const pw = this.scene.charge;
-    setW(el.querySelector('.pgauge .fill'), pw);
-    el.querySelector('.pgauge .num')!.textContent = String(Math.round(pw));
-    const last = el.querySelector('.pgauge .last') as HTMLElement;
-    if (cp.lastPower !== null) {
-      last.style.display = 'block';
-      last.style.left = `calc(${cp.lastPower}% - 1px)`;
-    } else last.style.display = 'none';
+    const who = g.phase === 'over' ? '경기 종료' : `${cp.name.split(' · ').pop()}의 턴`;
+    (el.querySelector('.h-turn .who') as HTMLElement).textContent = who;
+    (el.querySelector('.h-turn .tn') as HTMLElement).textContent = `TURN ${g.turnNumber}`;
+    const ts = el.querySelector('.h-turn .ts') as HTMLElement;
+    const timing = g.phase === 'aiming' || g.phase === 'turnStart';
+    ts.textContent = timing ? `${sec}초` : '—';
+    ts.classList.toggle('warn', g.phase === 'aiming' && sec <= 5);
+    // 미니맵
+    this.drawMinimap(el.querySelector('.mini canvas') as HTMLCanvasElement, g);
+    // 하단: 각도 다이얼
+    const ang = Math.round(cp.angle);
+    (el.querySelector('.av') as HTMLElement).textContent = `${ang}°`;
+    const needle = el.querySelector('.needle') as SVGLineElement;
+    const rad = (ang * Math.PI) / 180;
+    // 바늘은 실제 발사 방향 (오른쪽을 보면 0°=오른쪽, 왼쪽을 보면 0°=왼쪽)
+    const da = cp.facing === 1 ? rad : Math.PI - rad;
+    needle.setAttribute('x2', (61 + Math.cos(da) * 44).toFixed(1));
+    needle.setAttribute('y2', (62 - Math.sin(da) * 44).toFixed(1));
+    // 무기 슬롯
     const wb = el.querySelector('[data-w="basic"]') as HTMLElement;
     const ws = el.querySelector('[data-w="special"]') as HTMLElement;
     wb.classList.toggle('on', this.scene.selected === 'basic');
@@ -406,8 +508,35 @@ export class UI {
     ws.classList.toggle('locked', cp.gauge < MAX_GAUGE);
     ws.classList.toggle('ready', cp.gauge >= MAX_GAUGE && this.scene.selected !== 'special' && local);
     setW(ws.querySelector('.charge'), cp.gauge);
-    ws.querySelector('.spn')!.textContent = CHAR_TYPES[cp.charType].specialName.length > 6 ? '필살기' : CHAR_TYPES[cp.charType].specialName;
-    ws.title = `${CHAR_TYPES[cp.charType].specialName} (게이지 ${cp.gauge}/100)`;
+    const def = CHAR_TYPES[cp.charType];
+    (ws.querySelector('.spn') as HTMLElement).textContent = def.specialName;
+    (ws.querySelector('.spg') as HTMLElement).textContent = cp.gauge >= MAX_GAUGE ? 'READY' : `${cp.gauge}%`;
+    ws.title = `${def.specialName}: ${def.specialDesc}`;
+    // TIME
+    const tm = el.querySelector('.timep .tm') as HTMLElement;
+    tm.textContent = timing ? String(sec) : '—';
+    tm.classList.toggle('warn', g.phase === 'aiming' && sec <= 5);
+    // 상태 바: 체력(현재 플레이어)·파워·이동
+    const hpb = el.querySelector('.br.hp') as HTMLElement;
+    setW(hpb.querySelector('.fill'), cp.hp);
+    setW(hpb.querySelector('.ghost'), cp.hp);
+    (hpb.querySelector('.num') as HTMLElement).textContent = `${cp.hp} / 100`;
+    const pw = this.scene.charge;
+    const pwb = el.querySelector('.br.pw') as HTMLElement;
+    setW(pwb.querySelector('.fill'), pw);
+    (pwb.querySelector('.num') as HTMLElement).textContent = `${Math.round(pw)} %`;
+    const last = pwb.querySelector('.last') as HTMLElement;
+    if (cp.lastPower !== null) {
+      last.style.display = 'block';
+      last.style.left = `calc(${cp.lastPower}% - 1px)`;
+    } else last.style.display = 'none';
+    const mvb = el.querySelector('.br.mv') as HTMLElement;
+    setW(mvb.querySelector('.fill'), (cp.moveLeft / MOVE_PER_TURN) * 100);
+    (mvb.querySelector('.num') as HTMLElement).textContent = `${Math.round(cp.moveLeft)} / ${MOVE_PER_TURN}`;
+    // 조작 가능 여부
+    const bottom = el.querySelector('.h-bottom') as HTMLElement;
+    bottom.classList.toggle('idle', !(local && g.canControl));
+    (el.querySelector('.firebtn') as HTMLElement).classList.toggle('charging', this.scene.charging);
     if (g.current !== this.lastTurn) this.lastTurn = g.current;
   }
 

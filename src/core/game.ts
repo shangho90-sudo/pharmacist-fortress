@@ -284,6 +284,18 @@ export class Game {
     this.setPhase('settling');
   }
 
+  /** Server-authorized disconnect/leave, replayed identically by every client. */
+  forfeit(id: number) {
+    const p = this.players[id];
+    if (!p || !p.alive || this.phase === 'over') return;
+    p.hp = 0; p.alive = false; p.deathCause = 'hp';
+    this.events.push({ type: 'death', player: id, cause: 'hp' });
+    if (this.checkGameOver()) return;
+    if (this.current === id && (this.phase === 'aiming' || this.phase === 'turnStart')) {
+      this.input = { move: 0, aim: 0 }; this.setPhase('settling');
+    }
+  }
+
   private spawn(proj: Projectile, weapon: WeaponId, owner: number, facing: 1 | -1) {
     const id = this.nextProjId++;
     this.projectiles.push({ ...proj, id, weapon, owner, facing, prevX: proj.x, prevY: proj.y });

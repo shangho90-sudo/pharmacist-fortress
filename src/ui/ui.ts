@@ -1,3 +1,5 @@
+import { OnlineLobby } from '../online/lobby';
+import type { StartMatch } from '../online/protocol';
 import { CHAR_LIST, CHAR_TYPES, type CharTypeId } from '../core/characters';
 import { MAX_GAUGE, MOVE_PER_TURN, TICK_RATE } from '../core/constants';
 import type { AiLevel, Game, GameEvent, PlayerSetup } from '../core/game';
@@ -15,7 +17,7 @@ const h = (html: string): HTMLElement => {
 const portrait = (id: CharTypeId) => `chars2/${id}_idle.png`;
 const battlePic = (id: CharTypeId) => `chars2/${id}_battle.png`;
 
-type Mode = 'ai' | 'local';
+type Mode = 'ai' | 'online';
 
 /** 원화 좌표 → 컨테이너 % 위치 */
 function box(W: number, H: number, x0: number, y0: number, x1: number, y1: number) {
@@ -45,6 +47,8 @@ export class UI {
   private stats: number[] = [];
   private raf = 0;
   private lastTurn = -1;
+  private online: OnlineLobby | null = null;
+  private onlineMatch: StartMatch | null = null;
 
   constructor(private scene: BattleScene) {
     this.root = document.getElementById('ui')!;
@@ -75,6 +79,7 @@ export class UI {
 
   // ───────────── 시작 화면 (원화 + START/EXIT) ─────────────
   showTitle() {
+    this.online?.close(); this.online = null; this.onlineMatch = null;
     this.removeHud();
     this.stopSelectTimer();
     this.scene.stopBattle();
@@ -106,8 +111,7 @@ export class UI {
       <div class="modal arcade"><div class="abox">
         <div class="atitle">GAME MODE</div>
         <button class="abtn gold" data-a="ai">🤖 AI 대전</button>
-        <button class="abtn blue" data-a="local">👥 2인 대전 <small>한 기기</small></button>
-        <button class="abtn gray" disabled>🌐 온라인 대전 <small>준비 중</small></button>
+        <button class="abtn blue" data-a="online">🌐 온라인 대전 <small>로그인 없이 공개 대기실 참여</small></button>
         <div class="arow"><button class="abtn blue sm" data-a="help">조작법</button><button class="abtn blue sm" data-a="settings">설정</button></div>
         <button class="aclose" data-a="close">✕</button>
       </div></div>`);
@@ -117,12 +121,13 @@ export class UI {
       if (t === el || a === 'close') return el.remove();
       if (!a) return;
       audio.click();
-      if (a === 'ai' || a === 'local') {
+      if (a === 'ai') {
         el.remove();
         this.setup.mode = a;
         this.selSlot = 'p1';
         this.showSelect();
       }
+      if (a === 'online') { el.remove(); this.showOnline(); }
       if (a === 'help') {
         el.remove();
         this.showHelp();
@@ -329,16 +334,10 @@ export class UI {
     const s = this.setup;
     const n1 = CHAR_TYPES[s.p1].name,
       n2 = CHAR_TYPES[s.p2].name;
-    const players: PlayerSetup[] =
-      s.mode === 'ai'
-        ? [
-            { name: `나 · ${n1}`, charType: s.p1, team: 0, controller: 'human' },
-            { name: `AI · ${n2}`, charType: s.p2, team: 1, controller: 'ai', aiLevel: s.level },
-          ]
-        : [
-            { name: `P1 · ${n1}`, charType: s.p1, team: 0, controller: 'human' },
-            { name: `P2 · ${n2}`, charType: s.p2, team: 1, controller: 'human' },
-          ];
+    const players: PlayerSetup[] = [
+      { name: '나 · ' + n1, charType: s.p1, team: 0, controller: 'human' },
+      { name: 'AI · ' + n2, charType: s.p2, team: 1, controller: 'ai', aiLevel: s.level },
+    ];
     this.setScreen(null);
     this.stats = players.map(() => 0);
     this.lastTurn = -1;
@@ -351,6 +350,38 @@ export class UI {
     audio.playBgm('battle');
   }
 
+  private showOnline() {
+    this.setup.mode = 'online';
+    this.removeHud(); this.stopSelectTimer(); this.scene.stopBattle();
+    if (!this.online) {
+      const lobby = this.online = new OnlineLobby();
+      lobby.onExit = () => this.showTitle();
+      lobby.onShow = () => {
+        this.removeHud(); this.scene.stopBattle(); this.setScreen(lobby.element); audio.playBgm('title');
+      };
+      lobby.onStart = m => this.startOnline(m);
+      lobby.onFrame = m => {
+        if (!this.onlineMatch || this.onlineMatch.match !== m.match || !this.scene.game2) return;
+        if (!this.scene.applyNetworkFrame(m)) {
+          lobby.close(); lobby.status = '게임 연결이 어긋났습니다. 다시 연결해 주세요.';
+          lobby.room = null; lobby.onShow(); lobby.show();
+        }
+      };
+      void lobby.connect();
+    }
+    this.online.show(); this.setScreen(this.online.element); audio.playBgm('title');
+  }
+
+  private startOnline(m: StartMatch) {
+    const lobby = this.online!;
+    this.onlineMatch = m; this.setup.mode = 'online';
+    this.stopSelectTimer(); this.setScreen(null); this.stats = m.options.players.map(() => 0);
+    this.lastTurn = -1; this.buildHud();
+    this.scene.startBattle({ ...m.options, online: { player: m.seats.indexOf(lobby.client.id), send: (action, turn) => lobby.client.send({ type: 'command', action, turn }) } },
+      { onEvent: (e, g) => this.onEvent(e, g), onGameOver: g => this.showResult(g) });
+    audio.playBgm('battle');
+  }
+
   private onEvent(e: GameEvent, g: Game) {
     if (e.type === 'damage') {
       const att = g.players[e.from];
@@ -358,7 +389,7 @@ export class UI {
     }
     if (e.type === 'turnStart') {
       const p = g.players[e.player];
-      const local = this.setup.mode === 'local' || p.controller === 'human';
+      const local = this.scene.isLocalTurn();
       const sub = e.round === 1 && g.turnNumber === 1 ? `${g.map.icon} ${g.map.name}` : `ROUND ${e.round}`;
       this.showBanner(local && this.setup.mode === 'ai' ? '나의 턴!' : `${p.name.split(' · ').pop()}의 턴`, sub);
     }
@@ -684,7 +715,12 @@ export class UI {
     let title = '무승부',
       cls = 'lose';
     if (winner) {
-      if (s.mode === 'ai') {
+      if (s.mode === 'online') {
+        const mine = g.players[this.scene.cfg.online!.player];
+        const won = mine.team === g.winnerTeam;
+        title = this.onlineMatch?.mode === 'teams' ? (g.winnerTeam === 0 ? 'BLUE 팀 승리!' : 'RED 팀 승리!') : winner.name + ' 승리!';
+        cls = won ? 'win' : 'lose';
+      } else if (s.mode === 'ai') {
         const won = winner.controller === 'human';
         title = won ? '승리!' : '패배...';
         cls = won ? 'win' : 'lose';
@@ -704,14 +740,14 @@ export class UI {
         </div>
         <div class="sel-actions">
           <button class="btn ghost" data-a="menu">메인으로</button>
-          <button class="btn" data-a="select">캐릭터 다시 선택</button>
-          <button class="btn primary" data-a="again">재대결</button>
+${s.mode === 'online' ? '<button class="btn primary" data-a="lobby">대기실로</button>' : '<button class="btn" data-a="select">캐릭터 다시 선택</button><button class="btn primary" data-a="again">재대결</button>'}
         </div>
       </div>`);
     el.addEventListener('click', (e) => {
       const a = (e.target as HTMLElement).closest('[data-a]')?.getAttribute('data-a');
       if (!a) return;
       audio.click();
+      if (a === 'lobby') this.showOnline();
       if (a === 'again') this.startMatch();
       if (a === 'select') {
         this.removeHud();

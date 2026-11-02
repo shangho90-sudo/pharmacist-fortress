@@ -1,3 +1,4 @@
+import { applyCommand, type BattleAction, type Frame } from '../online/protocol';
 import Phaser from 'phaser';
 import { planShot, type AiPlan } from '../core/ai';
 import { CHAR_TYPES, CHAR_LIST, type CharTypeId } from '../core/characters';
@@ -46,6 +47,7 @@ export interface BattleConfig {
   mapId?: MapId;
   players: PlayerSetup[];
   demo?: boolean;
+  online?: { player: number; send: (action: BattleAction, turn: number) => void };
 }
 
 export interface BattleHooks {
@@ -149,6 +151,14 @@ export class BattleScene extends Phaser.Scene {
     this.aimGfx = this.add.graphics().setDepth(25);
     this.marker = this.add.image(0, 0, 'ui_marker').setDepth(45).setVisible(false);
     this.setupInput();
+    const stopOnlineInput = () => {
+      if (this.cfg?.online && this.game2) {
+        this.cfg.online.send({ kind: 'input', move: 0, aim: 0 }, this.game2.turnNumber);
+        this.charging = false; this.touchMove = 0; this.touchAim = 0;
+      }
+    };
+    window.addEventListener('blur', stopOnlineInput);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) stopOnlineInput(); });
     this.onReady?.();
   }
 
@@ -206,6 +216,8 @@ export class BattleScene extends Phaser.Scene {
     this.terrainView = new TerrainView(this, g.terrain, g.material, g.mapId, cfg.seed, 0);
     this.views = g.players.map((p) => this.makeCharView(p));
     this.acc = 0;
+    this.lastOnlineInput = '';
+    this.lastOnlineSend = 0;
     this.charge = 0;
     this.charging = false;
     this.selected = 'basic';
@@ -573,7 +585,7 @@ export class BattleScene extends Phaser.Scene {
   /** 현재 턴이 이 기기의 사람 플레이어인가 */
   isLocalTurn(): boolean {
     const g = this.game2;
-    return !!g && !this.cfg.demo && g.currentPlayer.controller === 'human' && g.phase !== 'over';
+    return !!g && !this.cfg.demo && g.currentPlayer.controller === 'human' && (!this.cfg.online || g.current === this.cfg.online.player) && g.phase !== 'over';
   }
 
   setTouchMove(d: number) {
@@ -604,14 +616,18 @@ export class BattleScene extends Phaser.Scene {
     if (!this.charging) return;
     this.charging = false;
     if (!this.isLocalTurn() || !this.game2.canControl) return;
-    this.game2.fire(this.selected, this.charge);
+    if (this.cfg.online) this.cfg.online.send({ kind: 'fire', weapon: this.selected, power: this.charge }, this.game2.turnNumber);
+    else this.game2.fire(this.selected, this.charge);
   }
   skipTurn() {
-    if (this.isLocalTurn()) this.game2.skipTurn();
+    if (!this.isLocalTurn()) return;
+    if (this.cfg.online) this.cfg.online.send({ kind: 'skip' }, this.game2.turnNumber);
+    else this.game2.skipTurn();
   }
 
   private applyHumanInput() {
     const g = this.game2;
+    if (this.cfg.online && document.hidden) return;
     if (!this.isLocalTurn() || !g.canControl || this.paused) {
       if (this.charging && !g.canControl) this.charging = false;
       return;
@@ -621,7 +637,13 @@ export class BattleScene extends Phaser.Scene {
     this.keyAim = (k.up.isDown || k.w.isDown ? 1 : 0) - (k.down.isDown || k.s.isDown ? 1 : 0);
     const move = this.charging ? 0 : Math.sign(this.keyMove || this.touchMove);
     const aim = Math.sign(this.keyAim || this.touchAim);
-    g.setInput({ move: move as -1 | 0 | 1, aim: aim as -1 | 0 | 1 });
+    if (this.cfg.online) {
+      const key = g.turnNumber + ':' + move + ':' + aim;
+      if (key !== this.lastOnlineInput || performance.now() - this.lastOnlineSend > 150) {
+        this.cfg.online.send({ kind: 'input', move: move as -1 | 0 | 1, aim: aim as -1 | 0 | 1 }, g.turnNumber);
+        this.lastOnlineInput = key; this.lastOnlineSend = performance.now();
+      }
+    } else g.setInput({ move: move as -1 | 0 | 1, aim: aim as -1 | 0 | 1 });
     if (move !== 0 && this.camMode === 'free') this.camMode = 'player';
     if (this.charging) {
       const before = this.charge;
@@ -685,6 +707,19 @@ export class BattleScene extends Phaser.Scene {
 
   // ───────────────────────── 메인 루프 ─────────────────────────
   private lastNow = 0;
+  private lastOnlineInput = '';
+  private lastOnlineSend = 0;
+
+  applyNetworkFrame(frame: Frame): boolean {
+    if (!this.cfg.online || !this.game2 || frame.from !== this.game2.tick) return false;
+    for (const commands of frame.steps) {
+      for (const command of commands) applyCommand(this.game2, command);
+      this.game2.step();
+      this.processEvents();
+    }
+    this.acc = DT;
+    return true;
+  }
 
   update() {
     const g = this.game2;
@@ -695,6 +730,7 @@ export class BattleScene extends Phaser.Scene {
     this.lastNow = now;
     if (!this.paused) {
       this.applyHumanInput();
+      if (!this.cfg.online) {
       this.updateAi(dt);
       // 고정 타임스텝 누적기 → 프레임 속도와 무관한 결정론적 시뮬레이션
       this.acc += dt;
@@ -706,6 +742,7 @@ export class BattleScene extends Phaser.Scene {
         this.processEvents();
       }
       if (steps >= 40) this.acc = 0;
+      }
     }
     this.renderWorld(dt);
     this.updateCamera(dt);
@@ -869,8 +906,8 @@ export class BattleScene extends Phaser.Scene {
       case 'gameOver': {
         this.overTimer = 2.2;
         if (sfx) {
-          const local = g.players.find((p) => p.controller === 'human');
-          const allHuman = g.players.every((p) => p.controller === 'human');
+          const local = this.cfg.online ? g.players[this.cfg.online.player] : g.players.find((p) => p.controller === 'human');
+          const allHuman = !this.cfg.online && g.players.every((p) => p.controller === 'human');
           if (allHuman || (local && local.team === e.winnerTeam)) audio.win();
           else audio.lose();
         }

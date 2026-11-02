@@ -1,0 +1,44 @@
+const { chromium } = require('playwright');
+const assert=require('node:assert/strict');
+(async()=>{
+const b=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--disable-background-timer-throttling','--disable-renderer-backgrounding']});
+const errors=[];const pages=[];
+for(const name of ['방장테스트','참가테스트','강퇴테스트']){
+ const context=await b.newContext({viewport:{width:1440,height:900}}),p=await context.newPage();pages.push(p);p.on('pageerror',e=>errors.push(e.message));
+ await p.goto(process.env.GAME_URL||'http://127.0.0.1:5175/');await p.waitForFunction(()=>window.__pf);
+ await p.click('[data-a=start]');assert.equal(await p.locator('[data-a=local]').count(),0);await p.click('[data-a=online]');
+ await p.waitForFunction(()=>document.querySelector('[data-action=create]')&&!document.querySelector('[data-action=create]').disabled);
+ await p.fill('[name=nickname]',name);
+}
+const [a,c,d]=pages;
+await a.fill('[name=title]','온라인 기능 검증');await a.click('[data-action=create]');
+await c.locator('[data-action=join]').first().click();await c.waitForSelector('.online-characters');
+await a.click('[data-action=ready]');await c.waitForSelector('[data-character=paeng].locked');assert(await c.locator('[data-character=paeng]').isDisabled());
+assert(await a.locator('[data-action=start]').isDisabled());
+await c.click('[data-character=gu]');await c.click('[data-action=ready]');
+await d.locator('[data-action=join]').first().click();await d.waitForSelector('.online-characters');
+await a.waitForFunction(()=>document.querySelectorAll('.member').length===3);
+await a.locator('.member').filter({hasText:'강퇴테스트'}).locator('[data-action=kick]').click();await d.waitForSelector('.online-browser');
+await d.locator('[data-action=join]').first().click();await d.waitForFunction(()=>document.querySelector('#online-notice')?.textContent.includes('강퇴'));
+await a.selectOption('[name=mode]','teams');await c.waitForFunction(()=>document.querySelector('[data-team=red]'));
+await c.click('[data-team=red]');await a.click('[data-team=blue]');
+await a.click('[data-action=ready]');await c.click('[data-action=ready]');
+await a.waitForFunction(()=>!document.querySelector('[data-action=start]').disabled);
+assert.equal(await a.locator('.host-star').count(),1);assert.equal(await c.locator('[data-action=start]').count(),0);
+await a.screenshot({path:'docs/compare/online-lobby.png'});
+await a.click('[data-action=start]');
+for(const p of [a,c])await p.waitForFunction(()=>window.__pf.scene.cfg?.online&&window.__pf.scene.game2?.canControl);
+const current=await a.evaluate(()=>window.__pf.scene.game2.current);
+const actor=await a.evaluate(()=>window.__pf.scene.cfg.online.player)===current?a:c;
+await actor.keyboard.down('ArrowRight');await actor.waitForTimeout(400);await actor.keyboard.up('ArrowRight');
+await actor.keyboard.down('Space');await actor.waitForTimeout(700);await actor.keyboard.up('Space');await actor.waitForTimeout(2600);
+const state=async p=>p.evaluate(()=>{const g=window.__pf.scene.game2;return {tick:g.tick,phase:g.phase,terrain:g.terrain.version,players:g.players.map(p=>({hp:p.hp,x:p.x,y:p.y,angle:p.angle}))}});
+const sa=await state(a),sc=await state(c);
+assert.equal(sa.terrain,sc.terrain);assert.deepEqual(sa.players,sc.players);
+await a.screenshot({path:'docs/compare/online-battle.png'});
+await c.close();await a.waitForSelector('[data-a=lobby]',{timeout:15000});await a.click('[data-a=lobby]');await a.waitForSelector('.online-characters');
+assert.equal(await a.locator('.member').count(),1);assert(await a.locator('[data-action=start]').isDisabled());
+await a.click('[data-action=leave]');await a.setViewportSize({width:740,height:390});await a.screenshot({path:'docs/compare/online-mobile.png'});
+console.log(JSON.stringify({ok:true,ticks:[sa.tick,sc.tick],terrain:sa.terrain,errors},null,2));assert.equal(errors.length,0);
+await b.close();
+})().catch(e=>{console.error(e);process.exit(1)});

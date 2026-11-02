@@ -6,18 +6,18 @@ import { Game, type GameEvent, type Player, type PlayerSetup } from '../core/gam
 import { cosDeg, sinDeg } from '../core/physics';
 import { WEAPONS, type WeaponId } from '../core/weapons';
 import { MAP_INFO, MAP_LIST, type MapId } from '../core/mapgen';
-import { dragonHead, drawGun, drawProjectile, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_RES, GUN_SCALE, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
+import { drawGun, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_RES, GUN_SCALE, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
 import { audio } from './audio';
 import { buildForestLayers, buildMushroomLayer, buildPineLayer, sunRayCanvas, buildSkyLayers, buildVolcanoLayers, cloudsCanvas, skyCanvas } from './background';
 import { Effects } from './effects';
+import { PROJECTILE_ASSETS, ProjectileVisual } from './projectiles';
 import SPRITES from '../../public/chars2/manifest.json';
 
 type FrameName = 'idle' | 'battle' | 'shoot';
 const SPR = SPRITES as Record<string, Record<FrameName, { w: number; h: number; ox: number }>>;
 /** 캐릭터 화면 높이(월드 px) */
 const CHAR_WORLD_H = 80;
-/** 탄 표시 배율 (판정 크기는 그대로, 보이는 크기만 3배) */
-const PROJ_VISUAL_SCALE = 3;
+
 const charScale = (id: string) => CHAR_WORLD_H / SPR[id].idle.h;
 import { asteroidCanvas, earthCanvas, nebulaCanvas, shipCanvas, stationCanvas } from './spaceBg';
 import { TerrainView } from './terrainView';
@@ -84,7 +84,7 @@ export class BattleScene extends Phaser.Scene {
   hooks: BattleHooks = {};
   private terrainView: TerrainView | null = null;
   private views: CharView[] = [];
-  private projSprites = new Map<number, { img: Phaser.GameObjects.Image; trail: Phaser.GameObjects.Particles.ParticleEmitter }>();
+  private projSprites = new Map<number, ProjectileVisual>();
   private fx!: Effects;
   private acc = 0;
   private bgImages: { img: Phaser.GameObjects.Image | Phaser.GameObjects.TileSprite; factor: number; y: number; kind: 'layer' | 'sky' | 'cloud'; ox?: number; oy?: number; bob?: number; bobSpeed?: number; phase?: number; spin?: number }[] = [];
@@ -126,6 +126,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   preload() {
+    for (const id of PROJECTILE_ASSETS) this.load.image(`projectile_${id}`, `projectiles/${id}.png`);
     for (const id of CHAR_LIST) for (const f of ['idle', 'battle', 'shoot']) this.load.image(`spr_${id}_${f}`, `chars2/${id}_${f}.png`);
     for (const id of MAP_LIST) {
       const bd = MAP_INFO[id].backdrop;
@@ -137,6 +138,7 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.setZoom(ZOOM);
     this.cameras.main.setBackgroundColor('#2a6f8c');
     this.makeTextures();
+    for (const id of PROJECTILE_ASSETS) this.textures.get(`projectile_${id}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
     // 일러스트(캐릭터·배경 사진)는 선형 필터, 픽셀아트(지형·무기·이펙트)는 최근접 필터
     for (const id of CHAR_LIST) for (const f of ['idle', 'battle', 'shoot']) this.textures.get(`spr_${id}_${f}`).setFilter(Phaser.Textures.FilterMode.LINEAR);
     for (const id of MAP_LIST) {
@@ -160,13 +162,22 @@ export class BattleScene extends Phaser.Scene {
       const g = makeCanvas(GUN_W * GUN_RES, GUN_H * GUN_RES);
       drawGun(g.getContext('2d')!, def.gun, def.palette);
       add(`gun_${id}`, g);
-      for (const w of Object.values(WEAPONS)) add(`proj_${w.id}_${id}`, drawProjectile(w.look, w.color ?? def.palette.accent));
     }
+    // High-resolution heal sphere for the green cross ultimate.
+    const heal = makeCanvas(256, 256), hc = heal.getContext('2d')!;
+    const hg = hc.createRadialGradient(105, 90, 8, 128, 128, 110);
+    hg.addColorStop(0, '#f0fff4'); hg.addColorStop(0.3, '#49ff97'); hg.addColorStop(0.8, '#087237'); hg.addColorStop(1, '#00ff88');
+    hc.fillStyle = hg; hc.shadowColor = '#28ff88'; hc.shadowBlur = 12;
+    hc.beginPath(); hc.arc(128, 128, 101, 0, Math.PI * 2); hc.fill();
+    hc.strokeStyle = '#afffe0'; hc.lineWidth = 5; hc.stroke();
+    hc.fillStyle = '#ffffff'; hc.fillRect(112, 65, 32, 126); hc.fillRect(65, 112, 126, 32);
+    add('projectile_heal', heal);
+    this.textures.get('projectile_heal').setFilter(Phaser.Textures.FilterMode.LINEAR);
     add('fx_soft', softCircle(64));
     add('fx_px', pixelSquare(2));
     add('fx_smoke', smokePuff(64));
     add('fx_dot', softCircle(8, 0.3));
-    add('fx_dragon', dragonHead());
+    for (const key of ['fx_soft', 'fx_smoke', 'fx_dot']) this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
     const m = document.createElement('canvas');
     m.width = 11;
     m.height = 9;
@@ -233,8 +244,7 @@ export class BattleScene extends Phaser.Scene {
     }
     this.views = [];
     for (const s of this.projSprites.values()) {
-      s.img.destroy();
-      s.trail.destroy();
+      s.destroy(true);
     }
     this.projSprites.clear();
     this.terrainView?.destroy();
@@ -744,7 +754,7 @@ export class BattleScene extends Phaser.Scene {
         const def = CHAR_TYPES[p.charType];
         const isUlt = e.weapon === def.ultimate.weapon,
           isSp = e.weapon === def.special.weapon;
-        this.fx.muzzle(e.x, e.y, a, isUlt || isSp);
+        this.fx.muzzle(e.x, e.y, a, isUlt || isSp, this.weaponColor(e.weapon, p.charType));
         if (isUlt || isSp) this.fx.skillCall(p.x, p.y - 104, isUlt ? def.ultimate.name : def.special.name, def.palette.glow, isUlt);
         if (sfx) {
           void audio.attackVoice(p.charType);
@@ -760,22 +770,7 @@ export class BattleScene extends Phaser.Scene {
         const owner = g.players[pr.owner];
         const col = this.weaponColor(e.weapon, owner.charType);
         const wdef = WEAPONS[e.weapon];
-        const img = this.add.image(pr.x, pr.y, `proj_${e.weapon}_${owner.charType}`).setDepth(20).setScale((wdef.scale ?? 1) * PROJ_VISUAL_SCALE);
-        const c = Phaser.Display.Color.HexStringToColor(col).color;
-        const big = (wdef.scale ?? 1) > 1.2 || wdef.look === 'big_capsule';
-        const tcfg: Record<string, Phaser.Types.GameObjects.Particles.ParticleEmitterConfig> = {
-          normal: { texture: 'fx_soft', lifespan: 420, scale: { start: big ? 0.5 : 0.34, end: 0 }, alpha: { start: 0.55, end: 0 }, tint: [0xffffff, c], blendMode: 'ADD' },
-          electric: { lifespan: 260, speed: { min: 20, max: 90 }, scale: { start: 3.2, end: 0 }, tint: [0xffffff, 0xbfe4ff, c], blendMode: 'ADD' },
-          shadow: { texture: 'fx_smoke', lifespan: 520, speed: { min: 5, max: 25 }, scale: { start: 0.3, end: 0.6 }, alpha: { start: 0.55, end: 0 }, tint: [0x1a0a2a, 0x3a1a5a, c] },
-          light: { lifespan: 480, speed: { min: 5, max: 30 }, scale: { start: 3.6, end: 0 }, tint: [0xffffff, 0xfff2a0, c], blendMode: 'ADD' },
-          heal: { lifespan: 600, speed: { min: 10, max: 40 }, scale: { start: 4, end: 0 }, tint: [0xffffff, 0xb0ffc0, c], blendMode: 'ADD' },
-          dragon: { texture: 'fx_soft', lifespan: 650, speed: { min: 10, max: 40 }, scale: { start: 0.7, end: 0 }, alpha: { start: 0.7, end: 0 }, tint: [0xffffff, 0xe0c2ff, c, 0x5b1fc0], blendMode: 'ADD' },
-        };
-        const kind = wdef.trail ?? 'normal';
-        const tc = tcfg[kind];
-        const trail = this.add.particles(0, 0, (tc as any).texture ?? 'fx_px', { ...tc, emitting: false });
-        trail.setDepth(19);
-        this.projSprites.set(e.id, { img, trail });
+        this.projSprites.set(e.id, new ProjectileVisual(this, pr.x, pr.y, wdef, col));
         break;
       }
       case 'explode': {
@@ -893,18 +888,13 @@ export class BattleScene extends Phaser.Scene {
     for (const [id, s] of this.projSprites) {
       const pr = g.projectiles.find((q) => q.id === id);
       if (!pr) {
-        s.img.destroy();
-        const t = s.trail;
-        this.time.delayedCall(700, () => t.destroy());
+        s.destroy();
         this.projSprites.delete(id);
         continue;
       }
       const x = pr.prevX + (pr.x - pr.prevX) * alpha;
       const y = pr.prevY + (pr.y - pr.prevY) * alpha;
-      s.img.setPosition(x, y);
-      if (WEAPONS[pr.weapon].look === 'axe' || WEAPONS[pr.weapon].look === 'cross') s.img.rotation += dt * 14 * pr.facing;
-      else s.img.setRotation(Math.atan2(pr.vy, pr.vx));
-      s.trail.emitParticleAt(x, y, WEAPONS[pr.weapon].trail === 'dragon' || WEAPONS[pr.weapon].trail === 'electric' ? 2 : 1);
+      s.update(x, y, pr.vx, pr.vy, pr.facing, dt);
       if (!this.silent && id === g.projectiles[0].id) audio.whistleUpdate(pr.vy);
     }
     // 캐릭터

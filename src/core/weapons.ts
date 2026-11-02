@@ -4,7 +4,7 @@
 export type WeaponId = string;
 
 /** 탄 외형 */
-export type ProjLook = 'capsule' | 'big_capsule' | 'pill' | 'orb' | 'orb_cross' | 'arrow' | 'axe' | 'big_axe' | 'syringe' | 'cross' | 'dark_orb';
+export type ProjLook = 'capsule' | 'big_capsule' | 'pill' | 'orb' | 'orb_cross' | 'arrow' | 'axe' | 'big_axe' | 'syringe' | 'cross' | 'dark_orb' | 'rocket';
 
 /** 착탄 시 추가 효과 */
 export type ImpactFx =
@@ -180,4 +180,4 @@ add(
 );
 
 // ─────────── 공통: 이동탄 (착탄 지점으로 이동, 피해 없음) ───────────
-add(W({ id: 'move_shot', name: '이동탄', damage: 0, radius: 0, look: 'orb', color: '#4ef0ff', trail: 'light', onImpact: [{ kind: 'teleport' }] }));
+add(W({ id: 'move_shot', name: '이동탄', damage: 0, radius: 0, look: 'rocket', color: '#4ef0ff', trail: 'light', onImpact: [{ kind: 'teleport' }] }));

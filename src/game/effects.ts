@@ -51,6 +51,7 @@ export class Effects {
   explosion(x: number, y: number, r: number, weapon: WeaponId, debrisColors: number[], color: string) {
     const pal = paletteFor(weapon, color);
     const s = r / 35;
+    this.signatureImpact(x, y, r, weapon, pal.ring);
     // 1. 섬광
     const flash = this.scene.add.image(x, y, 'fx_soft').setBlendMode(Phaser.BlendModes.ADD).setDepth(D_FX + 3).setTint(pal.flash);
     flash.setScale((r * 1.4) / 64);
@@ -147,8 +148,41 @@ export class Effects {
     );
   }
 
-  muzzle(x: number, y: number, angleRad: number, special: boolean) {
-    const f = this.scene.add.image(x, y, 'fx_soft').setBlendMode(Phaser.BlendModes.ADD).setDepth(D_FX + 3).setTint(special ? 0xe9d5ff : 0xfff3b0);
+  /** Character-colored rings, rays and glyphs over the physical impact point. */
+  private signatureImpact(x: number, y: number, r: number, weapon: WeaponId, color: number) {
+    const family = weapon.split('_')[0];
+    const gfx = this.scene.add.graphics().setDepth(D_FX + 2).setBlendMode(Phaser.BlendModes.ADD);
+    gfx.setPosition(x, y);
+    const state = { t: 0 };
+    this.scene.tweens.add({ targets: state, t: 1, duration: 520, ease: 'Quad.easeOut', onUpdate: () => {
+      const t = state.t, radius = r * (0.65 + t * 1.6), alpha = (1 - t) * 0.8;
+      gfx.clear().lineStyle(2 * (1 - t) + 0.5, color, alpha);
+      gfx.strokeEllipse(0, 0, radius * 2, radius * 0.65);
+      gfx.strokeCircle(0, 0, radius * 0.7);
+      const rays = family === 'bang' ? 12 : 8;
+      for (let i = 0; i < rays; i++) {
+        const a = i / rays * Math.PI * 2 + (family === 'jo' ? t * 2 : 0);
+        const inner = radius * 0.8, outer = radius * (1.2 + (i % 2) * 0.25);
+        gfx.lineBetween(Math.cos(a) * inner, Math.sin(a) * inner, Math.cos(a) * outer, Math.sin(a) * outer);
+      }
+      if (family === 'gu' || family === 'seok') {
+        gfx.lineStyle(7 * (1 - t) + 1, 0xffffff, alpha);
+        gfx.lineBetween(-radius * 0.3, 0, radius * 0.3, 0);
+        gfx.lineBetween(0, -radius * 0.3, 0, radius * 0.3);
+      }
+      if (family === 'cheol') {
+        gfx.lineStyle(1.5, 0xffffff, alpha);
+        gfx.strokeCircle(0, 0, radius * 0.35);
+        for (let i = 0; i < 4; i++) {
+          const a = i * Math.PI / 2;
+          gfx.lineBetween(Math.cos(a) * radius * 0.2, Math.sin(a) * radius * 0.2, Math.cos(a) * radius * 0.85, Math.sin(a) * radius * 0.85);
+        }
+      }
+    }, onComplete: () => gfx.destroy() });
+  }
+
+  muzzle(x: number, y: number, angleRad: number, special: boolean, color = '#ffd980') {
+    const f = this.scene.add.image(x, y, 'fx_soft').setBlendMode(Phaser.BlendModes.ADD).setDepth(D_FX + 3).setTint(hexNum(color));
     f.setScale(special ? 0.55 : 0.38);
     this.scene.tweens.add({ targets: f, scale: 0.05, alpha: 0, duration: 140, onComplete: () => f.destroy() });
     const deg = Phaser.Math.RadToDeg(angleRad);
@@ -156,7 +190,7 @@ export class Effects {
       x,
       y,
       'fx_px',
-      { speed: { min: 60, max: 200 }, angle: { min: deg - 25, max: deg + 25 }, lifespan: 220, scale: { start: 1.4, end: 0 }, tint: [0xffffff, 0xffe08a], blendMode: 'ADD' },
+      { speed: { min: 60, max: 200 }, angle: { min: deg - 25, max: deg + 25 }, lifespan: 220, scale: { start: 1.4, end: 0 }, tint: [0xffffff, hexNum(color)], blendMode: 'ADD' },
       8,
       400,
     );
@@ -269,7 +303,7 @@ export class Effects {
   /** 약물 드래곤: 지면을 따라 휩쓸며 이동하는 용 머리 + 불꽃 */
   dragonSweep(x0: number, dir: 1 | -1, step: number, count: number, intervalMs: number, color: string, surface: (x: number) => number) {
     const c = parseInt(color.slice(1), 16);
-    const head = this.scene.add.image(x0, surface(x0) - 26, 'fx_dragon').setDepth(D_FX + 3).setScale(dir * 2, 2);
+    const head = this.scene.add.image(x0, surface(x0) - 26, 'projectile_dragon').setDepth(D_FX + 3);
     const fire = this.scene.add.particles(0, 0, 'fx_soft', {
       lifespan: 700,
       speed: { min: 10, max: 60 },
@@ -280,6 +314,7 @@ export class Effects {
       emitting: false,
     });
     fire.setDepth(D_FX + 2);
+    head.setScale(dir * 120 / head.width, 120 / head.width);
     const st = { t: 0 };
     const total = count * intervalMs;
     this.scene.tweens.add({

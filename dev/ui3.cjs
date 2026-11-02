@@ -1,0 +1,13 @@
+const { chromium, devices } = require('playwright');
+(async () => { const b = await chromium.launch({ args: ['--use-gl=swiftshader','--ignore-gpu-blocklist'] });
+const tag = process.argv[2]||'pc';
+const ctx = await b.newContext(tag==='m' ? devices['iPhone 13 landscape'] : { viewport: { width: 1672, height: 941 } }); const p = await ctx.newPage();
+const errs=[]; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type()==='error') errs.push(m.text()); });
+await p.goto('http://127.0.0.1:5173/'); await p.waitForTimeout(2000);
+await p.click('[data-a=start]'); await p.waitForTimeout(300); await p.click('[data-a=ai]'); await p.waitForTimeout(500);
+await p.click('.ntile[data-id=gu]'); await p.click('.ntile[data-id=jo]'); await p.waitForTimeout(400);
+await p.screenshot({ path: `/tmp/ui/${tag}_s3.png` });
+await p.click('.nmap[data-map=moon_base]'); await p.click('[data-lv=hard]'); await p.click('[data-a=start]'); await p.waitForTimeout(3000);
+const st = await p.evaluate(() => { const g = window.__pf.scene.game2; return g ? [g.players.map(x => x.charType), g.mapId, g.players[1].aiLevel] : null; });
+console.log(tag, JSON.stringify(st), 'errs', errs.join(' | '));
+await b.close(); })();

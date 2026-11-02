@@ -180,6 +180,7 @@ export class BattleScene extends Phaser.Scene {
     this.cfg = cfg;
     this.hooks = hooks;
     this.silent = !!cfg.demo;
+    if (!this.silent) audio.preloadAttackVoices(cfg.players.map(p => p.charType));
     this.game2 = new Game({ seed: cfg.seed, players: cfg.players, mapId: cfg.mapId });
     const g = this.game2;
     this.buildBackground(cfg.seed);
@@ -208,6 +209,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private clearWorld() {
+    audio.stopVoice();
     for (const o of this.worldObjs) o.destroy();
     this.worldObjs = [];
     this.bgImages = [];
@@ -730,6 +732,7 @@ export class BattleScene extends Phaser.Scene {
         this.fx.muzzle(e.x, e.y, a, isUlt || isSp);
         if (isUlt || isSp) this.fx.skillCall(p.x, p.y - 104, isUlt ? def.ultimate.name : def.special.name, def.palette.glow, isUlt);
         if (sfx) {
+          void audio.attackVoice(p.charType);
           audio.fire(isUlt || isSp);
           audio.whistleStart();
         }

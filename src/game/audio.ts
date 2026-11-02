@@ -1,3 +1,4 @@
+import type { CharTypeId } from '../core/characters';
 // Runway BGM + WebAudio sound effects, with independent volume controls.
 type BgmKind = 'title' | 'battle' | null;
 
@@ -30,6 +31,9 @@ class AudioEngine {
   muted = false;
   private bgm: BgmKind = null;
   private music: HTMLAudioElement | null = null;
+  private voiceBuffers = new Map<CharTypeId, Promise<AudioBuffer | null>>();
+  private activeVoice: AudioBufferSourceNode | null = null;
+  private voiceRequest = 0;
   private whistle: { osc: OscillatorNode; gain: GainNode } | null = null;
 
   /** 사용자 제스처 이후 호출 (브라우저 자동재생 정책) */
@@ -108,6 +112,53 @@ class AudioEngine {
     o.connect(g).connect(dest ?? this.sfxGain);
     o.start(t);
     o.stop(t + dur + 0.05);
+  }
+
+  private loadVoice(character: CharTypeId): Promise<AudioBuffer | null> {
+    if (!this.ctx) return Promise.resolve(null);
+    const cached = this.voiceBuffers.get(character);
+    if (cached) return cached;
+    const context = this.ctx;
+    const pending = fetch(import.meta.env.BASE_URL + 'audio/voices/' + character + '.mp3')
+      .then(response => {
+        if (!response.ok) throw new Error('Voice unavailable');
+        return response.arrayBuffer();
+      })
+      .then(bytes => context.decodeAudioData(bytes))
+      .catch(() => {
+        this.voiceBuffers.delete(character);
+        return null;
+      });
+    this.voiceBuffers.set(character, pending);
+    return pending;
+  }
+
+  preloadAttackVoices(characters: CharTypeId[]) {
+    for (const character of new Set(characters)) void this.loadVoice(character);
+  }
+
+  stopVoice() {
+    this.voiceRequest++;
+    this.activeVoice?.stop();
+    this.activeVoice?.disconnect();
+    this.activeVoice = null;
+  }
+
+  async attackVoice(character: CharTypeId) {
+    this.stopVoice();
+    if (!this.ctx || this.muted || this.sfxVolume === 0 || document.hidden) return;
+    const request = this.voiceRequest;
+    const buffer = await this.loadVoice(character);
+    if (!buffer || request !== this.voiceRequest || this.muted || this.sfxVolume === 0 || document.hidden) return;
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.sfxGain);
+    source.onended = () => {
+      source.disconnect();
+      if (this.activeVoice === source) this.activeVoice = null;
+    };
+    this.activeVoice = source;
+    source.start();
   }
 
   fire(special = false) {
@@ -215,7 +266,10 @@ class AudioEngine {
     this.ctx.createMediaElementSource(this.music).connect(this.musicGain);
     if (this.bgm) this.music.src = this.musicUrl(this.bgm);
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) this.music?.pause();
+      if (document.hidden) {
+        this.music?.pause();
+        this.stopVoice();
+      }
       else this.resumeMusic();
     });
   }

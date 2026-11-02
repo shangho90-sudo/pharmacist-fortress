@@ -1,0 +1,72 @@
+[
+  {
+    "character": "paeng",
+    "name": "팽약사",
+    "voice": "Benjamin",
+    "text": "팽스닥 사세요",
+    "taskId": "13029283-c2b2-48e6-95ca-45d19eefb6dd"
+  },
+  {
+    "character": "du",
+    "name": "두약사",
+    "voice": "Ragnar",
+    "text": "증바람 가즈아",
+    "taskId": "7a1c02bf-fae4-4cd2-8690-4948c7dc7355"
+  },
+  {
+    "character": "gu",
+    "name": "구약사",
+    "voice": "Mark",
+    "text": "약국이 참 한가하네연",
+    "taskId": "3c91000e-0bce-4e5a-9060-ce124c97ff0b"
+  },
+  {
+    "character": "dong",
+    "name": "동약사",
+    "voice": "Bernard",
+    "text": "형들 개국하고 싶어요",
+    "taskId": "5816d63c-0910-48c1-99a3-d49fb2fdd8ff"
+  },
+  {
+    "character": "bang",
+    "name": "방약사",
+    "voice": "Chad",
+    "text": "팽스닥 믿습니다",
+    "taskId": "c5645333-bef6-4b03-a73a-245d55695851"
+  },
+  {
+    "character": "cheol",
+    "name": "철약사",
+    "voice": "James",
+    "text": "오늘도 병원 쉰다",
+    "taskId": "d9b05891-6bc1-47a7-a921-f7173c48869f"
+  },
+  {
+    "character": "seok",
+    "name": "석약사",
+    "voice": "Kirk",
+    "text": "대구로 놀러와",
+    "taskId": "8cd05734-f8e6-4a34-91ee-cc0f328ceccf"
+  },
+  {
+    "character": "jo",
+    "name": "조약사",
+    "voice": "Elliot",
+    "text": "티어 강등 당했어요",
+    "taskId": "0ddbcea8-fd26-43af-84c9-b1559b482d9e"
+  },
+  {
+    "character": "sagong",
+    "name": "사공약사",
+    "voice": "Billy",
+    "text": "콩콩이는 콩콩콩",
+    "taskId": "188875a9-54b4-43e0-a20f-e1d3c07b2873"
+  },
+  {
+    "character": "yong",
+    "name": "용약사",
+    "voice": "Clint",
+    "text": "내 티모맛좀 봐라",
+    "taskId": "6c95806a-0153-4e9e-bd41-d0f43003ed92"
+  }
+]

@@ -1,4 +1,4 @@
-// WebAudio 합성 사운드: 외부 파일 없이 효과음과 BGM을 생성한다. 음악/효과음 볼륨 별도 조절.
+// Runway BGM + WebAudio sound effects, with independent volume controls.
 type BgmKind = 'title' | 'battle' | null;
 
 const store = {
@@ -29,9 +29,7 @@ class AudioEngine {
   sfxVolume = store.get('pf_sfx', 0.7);
   muted = false;
   private bgm: BgmKind = null;
-  private bgmTimer: number | null = null;
-  private nextNoteTime = 0;
-  private step = 0;
+  private music: HTMLAudioElement | null = null;
   private whistle: { osc: OscillatorNode; gain: GainNode } | null = null;
 
   /** 사용자 제스처 이후 호출 (브라우저 자동재생 정책) */
@@ -52,7 +50,9 @@ class AudioEngine {
       const d = this.noiseBuf.getChannelData(0);
       for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     }
-    if (this.ctx.state === 'suspended') this.ctx.resume();
+    if (this.ctx.state === 'suspended') void this.ctx.resume().catch(() => {});
+    this.ensureMusic();
+    this.resumeMusic();
   }
 
   setMusicVolume(v: number) {
@@ -206,50 +206,42 @@ class AudioEngine {
     [494, 440, 392, 330].forEach((f, i) => this.tone(f, f * 0.98, 0.4, 0.22, 'triangle', i * 0.22));
   }
 
-  // ───────────── BGM (룩어헤드 스케줄러) ─────────────
-  playBgm(kind: BgmKind) {
-    if (this.bgm === kind) return;
-    this.bgm = kind;
-    if (this.bgmTimer !== null) {
-      clearInterval(this.bgmTimer);
-      this.bgmTimer = null;
-    }
-    if (!kind || !this.ctx) return;
-    this.step = 0;
-    this.nextNoteTime = this.ctx.currentTime + 0.1;
-    this.bgmTimer = window.setInterval(() => this.schedule(), 50);
+  // Use one player so screen transitions never overlap tracks.
+  private ensureMusic() {
+    if (this.music || !this.ctx) return;
+    this.music = new Audio();
+    this.music.loop = true;
+    this.music.preload = 'auto';
+    this.ctx.createMediaElementSource(this.music).connect(this.musicGain);
+    if (this.bgm) this.music.src = this.musicUrl(this.bgm);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.music?.pause();
+      else this.resumeMusic();
+    });
   }
 
-  private schedule() {
-    if (!this.ctx || !this.bgm) return;
-    const battle = this.bgm === 'battle';
-    const bpm = battle ? 132 : 96;
-    const sixteenth = 60 / bpm / 4;
-    // I–V–vi–IV (C장조) / 전투: vi–IV–I–V (a단조 느낌)
-    const prog = battle
-      ? [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]]
-      : [[48, 52, 55], [55, 59, 62], [57, 60, 64], [53, 57, 60]];
-    while (this.nextNoteTime < this.ctx.currentTime + 0.2) {
-      const bar = Math.floor(this.step / 16) % 4;
-      const s = this.step % 16;
-      const chord = prog[bar];
-      const t = this.nextNoteTime - this.ctx.currentTime;
-      const mf = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
-      // 베이스
-      if (s % (battle ? 2 : 4) === 0) this.tone(mf(chord[0] - 12), mf(chord[0] - 12), sixteenth * (battle ? 1.8 : 3.5), 0.22, 'triangle', t, this.musicGain);
-      // 아르페지오
-      const arp = [0, 1, 2, 1][s % 4];
-      if (battle || s % 2 === 0) this.tone(mf(chord[arp] + 12), mf(chord[arp] + 12), sixteenth * 1.6, battle ? 0.07 : 0.08, 'square', t, this.musicGain);
-      // 멜로디 포인트
-      if (s === 0 || s === 10) this.tone(mf(chord[2] + 24), mf(chord[2] + 24), sixteenth * 4, 0.05, 'triangle', t, this.musicGain);
-      // 드럼(전투)
-      if (battle && this.ctx && s % 4 === 0) {
-        const tt = t;
-        this.tone(140, 45, 0.12, 0.25, 'sine', tt, this.musicGain);
-      }
-      this.nextNoteTime += sixteenth;
-      this.step++;
+  private musicUrl(kind: Exclude<BgmKind, null>) {
+    return import.meta.env.BASE_URL + 'audio/' + kind + '.mp3';
+  }
+
+  private resumeMusic() {
+    if (!this.music || !this.bgm || document.hidden || !this.music.paused) return;
+    // Retry blocked autoplay on the next user gesture.
+    void this.music.play().catch(() => {});
+  }
+
+  playBgm(kind: BgmKind) {
+    if (this.bgm === kind) {
+      this.resumeMusic();
+      return;
     }
+    this.bgm = kind;
+    this.music?.pause();
+    if (!kind) return;
+    this.ensureMusic();
+    if (!this.music) return; // Remember the track until unlock().
+    this.music.src = this.musicUrl(kind);
+    this.resumeMusic();
   }
 }
 

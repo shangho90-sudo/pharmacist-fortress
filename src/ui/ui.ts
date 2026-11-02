@@ -1,7 +1,8 @@
-import { CHAR_LIST, CHAR_TYPES, type CharTypeId } from '../core/characters';
+import { CHAR_TYPES, type CharTypeId } from '../core/characters';
 import { MAX_GAUGE, MOVE_PER_TURN, TICK_RATE } from '../core/constants';
 import type { AiLevel, Game, GameEvent, PlayerSetup } from '../core/game';
 import { MAP_INFO, MAP_LIST, type MapId } from '../core/mapgen';
+import { WEAPONS } from '../core/weapons';
 import { audio } from '../game/audio';
 import type { BattleScene } from '../game/BattleScene';
 
@@ -16,6 +17,45 @@ const portrait = (id: CharTypeId) => `chars2/${id}_idle.png`;
 const battlePic = (id: CharTypeId) => `chars2/${id}_battle.png`;
 
 type Mode = 'ai' | 'local';
+
+/** 원화 좌표 → 컨테이너 % 위치 */
+function box(W: number, H: number, x0: number, y0: number, x1: number, y1: number) {
+  const f = (v: number) => v.toFixed(3);
+  return `left:${f((x0 / W) * 100)}%;top:${f((y0 / H) * 100)}%;width:${f(((x1 - x0) / W) * 100)}%;height:${f(((y1 - y0) / H) * 100)}%`;
+}
+
+/** 선택 화면 원화의 카드 배치 (1536×1024 기준) */
+const SELECT_CARDS: [CharTypeId, number, number, number, number][] = [
+  ['paeng', 86, 170, 338, 406], ['gu', 362, 166, 625, 410], ['bang', 638, 166, 899, 410], ['cheol', 912, 166, 1175, 410], ['dong', 1188, 166, 1455, 410],
+  ['seok', 82, 428, 347, 675], ['du', 362, 428, 625, 675], ['jo', 638, 428, 900, 675], ['sagong', 912, 428, 1175, 675], ['yong', 1188, 428, 1455, 675],
+];
+
+const STAT_NAMES = ['DEFENCE', 'MOVEMENT', 'POWER 1', 'POWER 2', 'FIRE ANGLE', 'FIRE RANGE'];
+
+/** 실제 무기 수치에서 계산한 능력치 (0~10). 체력·이동력은 모든 캐릭터 동일 */
+function charStats(id: CharTypeId): number[] {
+  const d = CHAR_TYPES[id];
+  const total = (wid: string) => {
+    const w = WEAPONS[wid];
+    const shots = w.burst?.count ?? w.spread?.length ?? 1;
+    let t = w.damage * shots;
+    for (const fx of w.onImpact ?? []) {
+      if (fx.kind === 'children') t += WEAPONS[fx.list[0].weapon].damage * fx.list.length * 0.6;
+      if (fx.kind === 'rain') t += WEAPONS[fx.weapon].damage * fx.offsets.length * 0.5;
+      if (fx.kind === 'strikes') t += WEAPONS[fx.weapon].damage * fx.offsets.length * 0.6;
+      if (fx.kind === 'sweep') t += WEAPONS[fx.weapon].damage * fx.count * 0.4;
+      if (fx.kind === 'global') t += WEAPONS[fx.weapon].damage;
+    }
+    return t;
+  };
+  const b = WEAPONS[d.basic.weapon];
+  const clamp = (v: number) => Math.max(1, Math.min(10, Math.round(v)));
+  const p1 = clamp((total(d.basic.weapon) / 26) * 10);
+  const p2 = clamp((total(d.ultimate.weapon) / 70) * 10);
+  const angle = clamp(5 + (1 - (b.windFactor ?? 1)) * 6 + (b.homing ? 3 : 0) + (b.spread ? 1 : 0));
+  const range = clamp(5 + ((b.speedScale ?? 1) - 1) * 25 + (1 - (b.gravityScale ?? 1)) * 10 + (b.radius > 40 ? 1 : 0));
+  return [6, 6, p1, p2, angle, range];
+}
 
 interface MatchSetup {
   mode: Mode;
@@ -65,148 +105,321 @@ export class UI {
     if (el) this.root.appendChild(el);
   }
 
-  // ───────────── 타이틀 (뒤에서 AI 데모 대전이 돌아간다) ─────────────
+  // ───────────── 시작 화면 (원화 + START/EXIT) ─────────────
   showTitle() {
     this.removeHud();
-    this.scene.startBattle({
-      seed: (Math.random() * 1e9) | 0,
-      demo: true,
-      mapId: MAP_LIST[Math.floor(Math.random() * MAP_LIST.length)],
-      players: (() => {
-        const a = CHAR_LIST[Math.floor(Math.random() * CHAR_LIST.length)];
-        let b = a;
-        while (b === a) b = CHAR_LIST[Math.floor(Math.random() * CHAR_LIST.length)];
-        return [
-          { name: CHAR_TYPES[a].name, charType: a, team: 0, controller: 'ai' as const, aiLevel: 'normal' as const },
-          { name: CHAR_TYPES[b].name, charType: b, team: 1, controller: 'ai' as const, aiLevel: 'normal' as const },
-        ];
-      })(),
-    }, { onGameOver: () => this.screen?.dataset.kind === 'title' && this.showTitle() });
+    this.stopSelectTimer();
+    this.scene.stopBattle();
     audio.playBgm('title');
+    // 원화 좌표(2250×1486) 기준 % 위치에 버튼 히트 영역을 정확히 겹친다
     const el = h(`
-      <div class="screen" data-kind="title">
-        <div class="logo">
-          <div class="ko"><div class="pill"></div><span class="a">약사</span><span class="b">대전</span></div>
-          <div class="en">PHARMACIST FORTRESS</div>
+      <div class="art-screen" data-kind="title">
+        <div class="art-blur" style="background-image:url(ui/title.jpg)"></div>
+        <div class="art" style="aspect-ratio:2250/1486;background-image:url(ui/title.jpg)">
+          <button class="hot start" style="${box(2250, 1486, 806, 980, 1452, 1170)}" data-a="start" aria-label="START"></button>
+          <button class="hot exit" style="${box(2250, 1486, 866, 1194, 1385, 1345)}" data-a="exit" aria-label="EXIT"></button>
+          <div class="ver">v0.5 · 약사대전</div>
         </div>
-        <div class="menu">
-          <button class="btn primary" data-a="ai">🤖 AI 대전</button>
-          <button class="btn" data-a="local">👥 2인 대전 (한 기기)</button>
-          <button class="btn" disabled title="4단계에서 추가 예정">🌐 온라인 대전 (준비 중)</button>
-          <div style="display:flex;gap:calc(var(--u)*0.8)">
-            <button class="btn ghost" style="flex:1" data-a="help">조작법</button>
-            <button class="btn ghost" style="flex:1" data-a="settings">설정</button>
-          </div>
-        </div>
-        <div class="foot">약으로 더 건강한 세상 · v0.1 (1단계 핵심 전투)</div>
       </div>`);
     el.addEventListener('click', (e) => {
       const a = (e.target as HTMLElement).closest('[data-a]')?.getAttribute('data-a');
       if (!a) return;
+      audio.unlock();
       audio.click();
-      if (a === 'ai' || a === 'local') {
-        this.setup.mode = a;
-        this.selSlot = 'p1';
-        this.showSelect();
-      } else if (a === 'help') this.showHelp();
-      else if (a === 'settings') this.toggleSettings(false);
+      if (a === 'start') this.showModeMenu();
+      if (a === 'exit') this.showExit();
     });
     this.setScreen(el);
   }
 
-  // ───────────── 캐릭터/난이도 선택 ─────────────
-  private selSlot: 'p1' | 'p2' = 'p1';
-
-  private showSelect() {
-    const s = this.setup;
-    const slotName = (slot: 'p1' | 'p2') => (slot === 'p1' ? (s.mode === 'ai' ? '나' : '플레이어 1') : s.mode === 'ai' ? '상대 (AI)' : '플레이어 2');
-    const slotHtml = (slot: 'p1' | 'p2') => {
-      const d = CHAR_TYPES[s[slot]];
-      return `<div class="slot ${this.selSlot === slot ? 'on' : ''} ${slot}" data-slot="${slot}" style="--glow:${d.palette.glow}">
-        <div class="tag">${slotName(slot)}</div>
-        <img src="${battlePic(d.id)}" alt="${d.name}">
-        <div class="nm">${d.name}<span>${d.roman} · ${d.role}</span></div>
-        <div class="ti">“${d.title}” · ${d.weaponName}</div>
-        <div class="sk"><i>기본</i><b>${d.basic.name}</b><small>${d.basic.desc}</small></div>
-        <div class="sk"><i>특수</i><b>${d.special.name}</b><small>${d.special.desc}</small></div>
-        <div class="sk ult"><i>필살</i><b>${d.ultimate.name}</b><small>${d.ultimate.desc}</small></div>
-      </div>`;
-    };
+  /** START → 모드 선택 */
+  private showModeMenu() {
     const el = h(`
-      <div class="screen dark sel">
-        <div class="sel-title">${s.mode === 'ai' ? 'AI 대전' : '2인 대전'} — 캐릭터 선택</div>
-        <div class="sel-main">
-          ${slotHtml('p1')}
-          <div class="grid-wrap">
-            <div class="hint">${slotName(this.selSlot)}의 캐릭터를 고르세요</div>
-            <div class="grid">${CHAR_LIST.map((id) => {
-              const d = CHAR_TYPES[id];
-              const on1 = s.p1 === id, on2 = s.p2 === id;
-              return `<button class="tile ${on1 ? 'p1on' : ''} ${on2 ? 'p2on' : ''}" data-id="${id}" style="--glow:${d.palette.glow}">
-                <img src="${portrait(id)}" alt=""><span>${d.name}</span>${on1 ? '<i class="b1">1P</i>' : ''}${on2 ? `<i class="b2">${s.mode === 'ai' ? 'AI' : '2P'}</i>` : ''}</button>`;
-            }).join('')}</div>
-            <div class="opts">
-              ${s.mode === 'ai' ? `<div class="seg" data-g="level">${(['easy', 'normal', 'hard'] as AiLevel[]).map((l) => `<button data-v="${l}" class="${s.level === l ? 'on' : ''}">${LEVEL_NAME[l]}</button>`).join('')}</div>` : ''}
-            </div>
-            <div class="maps" data-g="map">${MAP_LIST.map((id) => {
-              const m = MAP_INFO[id];
-              return `<button data-v="${id}" class="mapb ${s.map === id ? 'on' : ''}" title="${m.description}"><b>${m.icon} ${m.name}</b><small>${m.tags.join(' · ')}</small></button>`;
-            }).join('')}<button data-v="random" class="mapb ${s.map === 'random' ? 'on' : ''}"><b>🎲 랜덤 맵</b><small>무작위 전장</small></button></div>
-            <div class="opts">
-            </div>
-          </div>
-          ${slotHtml('p2')}
-        </div>
-        <div class="sel-actions">
-          <button class="btn ghost" data-a="back">뒤로</button>
-          <button class="btn ghost" data-a="random">🎲 랜덤</button>
-          <button class="btn primary" data-a="start">전투 시작!</button>
-        </div>
-      </div>`);
+      <div class="modal arcade"><div class="abox">
+        <div class="atitle">GAME MODE</div>
+        <button class="abtn gold" data-a="ai">🤖 AI 대전</button>
+        <button class="abtn blue" data-a="local">👥 2인 대전 <small>한 기기</small></button>
+        <button class="abtn gray" disabled>🌐 온라인 대전 <small>준비 중</small></button>
+        <div class="arow"><button class="abtn blue sm" data-a="help">조작법</button><button class="abtn blue sm" data-a="settings">설정</button></div>
+        <button class="aclose" data-a="close">✕</button>
+      </div></div>`);
     el.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
-      const slot = t.closest('.slot') as HTMLElement | null;
-      if (slot) {
-        this.selSlot = slot.dataset.slot as 'p1' | 'p2';
-        audio.click();
-        return this.showSelect();
+      const a = t.closest('[data-a]')?.getAttribute('data-a');
+      if (t === el || a === 'close') return el.remove();
+      if (!a) return;
+      audio.click();
+      if (a === 'ai' || a === 'local') {
+        el.remove();
+        this.setup.mode = a;
+        this.selSlot = 'p1';
+        this.ready = { p1: false, p2: false };
+        this.showSelect();
       }
-      const tile = t.closest('.tile') as HTMLElement | null;
-      if (tile) {
-        s[this.selSlot] = tile.dataset.id as CharTypeId;
-        if (this.selSlot === 'p1') this.selSlot = 'p2';
-        audio.click();
-        return this.showSelect();
+      if (a === 'help') {
+        el.remove();
+        this.showHelp();
       }
-      const segBtn = t.closest('.seg button, .maps button') as HTMLElement | null;
-      if (segBtn) {
-        const g = (segBtn.parentElement as HTMLElement).dataset.g!;
-        if (g === 'level') s.level = segBtn.dataset.v as AiLevel;
-        if (g === 'map') s.map = segBtn.dataset.v as MapId | 'random';
+      if (a === 'settings') {
+        el.remove();
+        this.toggleSettings(false);
+      }
+    });
+    this.root.appendChild(el);
+  }
+
+  private showExit() {
+    const el = h(`
+      <div class="modal arcade"><div class="abox">
+        <div class="atitle">EXIT</div>
+        <p class="amsg">게임을 종료할까요?</p>
+        <div class="arow"><button class="abtn gold sm" data-a="yes">종료</button><button class="abtn blue sm" data-a="no">취소</button></div>
+      </div></div>`);
+    el.addEventListener('click', (e) => {
+      const t = e.target as HTMLElement;
+      const a = t.closest('[data-a]')?.getAttribute('data-a');
+      if (t === el || a === 'no') return el.remove();
+      if (a === 'yes') {
+        audio.playBgm(null);
+        try {
+          window.close();
+        } catch {
+          /* 스크립트로 열지 않은 탭은 닫을 수 없음 */
+        }
+        el.querySelector('.abox')!.innerHTML = `<div class="atitle">GAME OVER</div><p class="amsg">플레이해 주셔서 감사합니다!<br>브라우저 탭을 닫으면 종료됩니다.</p><button class="abtn gold sm" data-a="back">처음으로</button>`;
+        el.querySelector('[data-a="back"]')!.addEventListener('click', () => {
+          el.remove();
+          this.showTitle();
+        });
+      }
+    });
+    this.root.appendChild(el);
+  }
+
+  // ───────────── 캐릭터 선택 (원화 + 실시간 정보 패널) ─────────────
+  private selSlot: 'p1' | 'p2' = 'p1';
+  private ready = { p1: false, p2: false };
+  private cursor: CharTypeId = 'paeng';
+  private selTimer = 0;
+  private selTimeLeft = 60;
+  private selKey: ((e: KeyboardEvent) => void) | null = null;
+
+  private stopSelectTimer() {
+    if (this.selTimer) clearInterval(this.selTimer);
+    this.selTimer = 0;
+    if (this.selKey) window.removeEventListener('keydown', this.selKey);
+    this.selKey = null;
+  }
+
+  private showSelect() {
+    this.stopSelectTimer();
+    this.scene.stopBattle();
+    const s = this.setup;
+    this.cursor = s[this.selSlot];
+    this.selTimeLeft = 60;
+    const W = 1536,
+      H = 1024;
+    const cards = SELECT_CARDS.map(
+      ([id, x0, y0, x1, y1]) => `<button class="scard" data-id="${id}" style="${box(W, H, x0, y0, x1, y1)}"><i class="b b1">1P</i><i class="b b2">${s.mode === 'ai' ? 'CPU' : '2P'}</i></button>`,
+    ).join('');
+    const el = h(`
+      <div class="art-screen" data-kind="select">
+        <div class="art-blur" style="background-image:url(ui/select_bg.jpg)"></div>
+        <div class="art sel-art" style="aspect-ratio:1536/1024;background-image:url(ui/select_bg.jpg)">
+          ${cards}
+          <div class="info" style="${box(W, H, 80, 691, 819, 889)}">
+            <div class="pic"><img alt=""></div>
+            <div class="nmbox"><b class="nm"></b><span class="ro"></span></div>
+            <div class="desc"></div>
+            <div class="skills"></div>
+            <div class="stats">${STAT_NAMES.map((n) => `<div class="st"><span>${n}</span><div class="trk"><i></i></div></div>`).join('')}</div>
+          </div>
+          <div class="guide" style="${box(W, H, 845, 698, 1284, 760)}"></div>
+          <button class="hot arr" data-a="prev" style="${box(W, H, 858, 780, 910, 850)}" aria-label="이전"></button>
+          <button class="hot arr" data-a="next" style="${box(W, H, 1012, 780, 1064, 850)}" aria-label="다음"></button>
+          <button class="hot stick" data-a="next" style="${box(W, H, 920, 755, 1000, 850)}" aria-label="선택"></button>
+          <button class="hot decide" data-a="decide" style="${box(W, H, 1105, 765, 1222, 880)}" aria-label="결정"></button>
+          <div class="timebox" style="${box(W, H, 1322, 728, 1452, 808)}"><b>60</b></div>
+          <div class="credits" style="${box(W, H, 1312, 822, 1462, 886)}"></div>
+          <button class="hot bbtn" data-a="blue" style="${box(W, H, 158, 910, 382, 984)}" aria-label="BLUE 팀"></button>
+          <button class="hot bbtn" data-a="red" style="${box(W, H, 393, 910, 609, 984)}" aria-label="RED 팀"></button>
+          <button class="hot bbtn" data-a="shop" style="${box(W, H, 620, 910, 850, 984)}" aria-label="아이템 상점"></button>
+          <button class="hot bbtn" data-a="ready" style="${box(W, H, 862, 910, 1088, 984)}" aria-label="준비 완료"></button>
+          <button class="hot bbtn go" data-a="go" style="${box(W, H, 1098, 905, 1380, 988)}" aria-label="대전 시작"></button>
+          <button class="hot back" data-a="back" style="${box(W, H, 36, 18, 440, 150)}" aria-label="메인으로" title="메인으로"></button>
+          <div class="toast"></div>
+        </div>
+      </div>`);
+    const order = SELECT_CARDS.map((c) => c[0]);
+    const move = (d: number) => {
+      const i = order.indexOf(this.cursor);
+      this.cursor = order[(i + d + order.length) % order.length];
+      audio.click();
+      this.refreshSelect();
+    };
+    const decide = () => {
+      s[this.selSlot] = this.cursor;
+      this.ready[this.selSlot] = true;
+      audio.turn();
+      if (this.selSlot === 'p1' && !this.ready.p2) {
+        this.selSlot = 'p2';
+        this.cursor = s.p2;
+      }
+      this.refreshSelect();
+    };
+    el.addEventListener('click', (e) => {
+      const t = e.target as HTMLElement;
+      const card = t.closest('.scard') as HTMLElement | null;
+      if (card) {
+        const id = card.dataset.id as CharTypeId;
+        if (this.cursor === id) return decide(); // 같은 카드 다시 누르면 결정
+        this.cursor = id;
+        s[this.selSlot] = id;
+        this.ready[this.selSlot] = false;
         audio.click();
-        return this.showSelect();
+        return this.refreshSelect();
       }
       const a = t.closest('[data-a]')?.getAttribute('data-a');
-      if (a === 'random') {
-        s.p1 = CHAR_LIST[Math.floor(Math.random() * CHAR_LIST.length)];
-        do s.p2 = CHAR_LIST[Math.floor(Math.random() * CHAR_LIST.length)];
-        while (s.p2 === s.p1);
+      if (!a) return;
+      if (a === 'prev') move(-1);
+      if (a === 'next') move(1);
+      if (a === 'decide' || a === 'ready') decide();
+      if (a === 'blue' || a === 'red') {
+        this.selSlot = a === 'blue' ? 'p1' : 'p2';
+        this.cursor = s[this.selSlot];
+        this.ready[this.selSlot] = false;
         audio.click();
-        return this.showSelect();
+        this.refreshSelect();
+      }
+      if (a === 'shop') this.toast('아이템 상점은 다음 업데이트에서 열립니다!');
+      if (a === 'go') {
+        audio.click();
+        this.showMatchSetup();
       }
       if (a === 'back') {
         audio.click();
         this.showTitle();
       }
-      if (a === 'start') {
+    });
+    this.selKey = (e: KeyboardEvent) => {
+      if (this.root.querySelector('.modal')) return;
+      if (e.key === 'ArrowRight') move(1);
+      else if (e.key === 'ArrowLeft') move(-1);
+      else if (e.key === 'ArrowDown') move(5);
+      else if (e.key === 'ArrowUp') move(-5);
+      else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (this.ready.p1 && this.ready.p2) this.showMatchSetup();
+        else decide();
+      } else if (e.key === 'Escape') this.showTitle();
+    };
+    window.addEventListener('keydown', this.selKey);
+    // 아케이드식 제한 시간: 0이 되면 현재 선택으로 자동 진행
+    this.selTimer = window.setInterval(() => {
+      if (this.root.querySelector('.modal')) return;
+      this.selTimeLeft--;
+      if (this.selTimeLeft <= 0) {
+        this.ready = { p1: true, p2: true };
+        this.stopSelectTimer();
+        this.showMatchSetup();
+      }
+      this.refreshSelect();
+    }, 1000);
+    this.setScreen(el);
+    this.refreshSelect();
+  }
+
+  private toast(msg: string) {
+    const t = this.screen?.querySelector('.toast') as HTMLElement | null;
+    if (!t) return;
+    t.textContent = msg;
+    t.classList.remove('show');
+    void t.offsetWidth;
+    t.classList.add('show');
+  }
+
+  private refreshSelect() {
+    const el = this.screen;
+    if (!el || el.dataset.kind !== 'select') return;
+    const s = this.setup;
+    el.querySelectorAll<HTMLElement>('.scard').forEach((c) => {
+      const id = c.dataset.id as CharTypeId;
+      c.classList.toggle('cur', id === this.cursor);
+      c.classList.toggle('slot-p2', this.selSlot === 'p2');
+      c.classList.toggle('p1', s.p1 === id);
+      c.classList.toggle('p2', s.p2 === id);
+    });
+    const d = CHAR_TYPES[this.cursor];
+    const info = el.querySelector('.info') as HTMLElement;
+    info.style.setProperty('--c', d.palette.accent);
+    info.style.setProperty('--cd', d.palette.accentDark);
+    (info.querySelector('.pic img') as HTMLImageElement).src = battlePic(d.id);
+    info.querySelector('.nm')!.textContent = d.name;
+    info.querySelector('.ro')!.textContent = `${d.roman} · ${d.role}`;
+    info.querySelector('.desc')!.textContent = d.description;
+    info.querySelector('.skills')!.innerHTML = `<span><i>기본</i>${d.basic.name}</span><span><i>특수</i>${d.special.name}</span><span class="u"><i>필살</i>${d.ultimate.name}</span>`;
+    const st = charStats(d.id);
+    info.querySelectorAll<HTMLElement>('.st .trk i').forEach((b, k) => {
+      b.style.width = `${st[k] * 10}%`;
+    });
+    const who = this.selSlot === 'p1' ? '1P' : s.mode === 'ai' ? 'CPU' : '2P';
+    const both = this.ready.p1 && this.ready.p2;
+    el.querySelector('.guide')!.innerHTML = both
+      ? `<b class="ok">준비 완료! ⚔ 대전 시작!</b>`
+      : `<b>${who}</b>캐릭터를 선택하세요!`;
+    const tb = el.querySelector('.timebox b') as HTMLElement;
+    tb.textContent = String(Math.max(0, this.selTimeLeft));
+    tb.classList.toggle('warn', this.selTimeLeft <= 10);
+    const n = (this.ready.p1 ? 1 : 0) + (this.ready.p2 ? 1 : 0);
+    el.querySelector('.credits')!.innerHTML = `READY ${n}<br>(${n}/2)`;
+    el.querySelector('.go')!.classList.toggle('pulse', both);
+    el.querySelector('[data-a="blue"]')!.classList.toggle('on', this.selSlot === 'p1');
+    el.querySelector('[data-a="red"]')!.classList.toggle('on', this.selSlot === 'p2');
+    el.querySelector('[data-a="ready"]')!.classList.toggle('on', this.ready[this.selSlot]);
+  }
+
+  /** 대전 시작 → 전장/난이도 선택 후 시작 */
+  private showMatchSetup() {
+    this.stopSelectTimer();
+    const s = this.setup;
+    const render = () => `
+      <div class="abox wide">
+        <div class="atitle">BATTLE SETUP</div>
+        <div class="vs"><img src="${battlePic(s.p1)}"><b>VS</b><img class="flip" src="${battlePic(s.p2)}"></div>
+        <div class="vsn"><span class="blue">${CHAR_TYPES[s.p1].name}</span><span class="red">${CHAR_TYPES[s.p2].name}</span></div>
+        ${s.mode === 'ai' ? `<div class="alabel">CPU 난이도</div><div class="aseg" data-g="level">${(['easy', 'normal', 'hard'] as AiLevel[]).map((l) => `<button data-v="${l}" class="${s.level === l ? 'on' : ''}">${LEVEL_NAME[l]}</button>`).join('')}</div>` : ''}
+        <div class="alabel">전장</div>
+        <div class="amaps" data-g="map">${MAP_LIST.map((id) => `<button data-v="${id}" class="${s.map === id ? 'on' : ''}"><b>${MAP_INFO[id].icon} ${MAP_INFO[id].name}</b><small>${MAP_INFO[id].tags.join(' · ')}</small></button>`).join('')}<button data-v="random" class="${s.map === 'random' ? 'on' : ''}"><b>🎲 랜덤 맵</b><small>무작위 전장</small></button></div>
+        <div class="arow"><button class="abtn blue sm" data-a="back">◀ 캐릭터 선택</button><button class="abtn gold sm" data-a="fight">⚔ 대전 시작!</button></div>
+      </div>`;
+    const el = h(`<div class="modal arcade">${render()}</div>`);
+    el.addEventListener('click', (e) => {
+      const t = e.target as HTMLElement;
+      const b = t.closest('[data-g] button') as HTMLElement | null;
+      if (b) {
+        const g = (b.parentElement as HTMLElement).dataset.g;
+        if (g === 'level') s.level = b.dataset.v as AiLevel;
+        if (g === 'map') s.map = b.dataset.v as MapId | 'random';
         audio.click();
+        el.innerHTML = render();
+        return;
+      }
+      const a = t.closest('[data-a]')?.getAttribute('data-a');
+      if (a === 'back') {
+        el.remove();
+        this.showSelect();
+      }
+      if (a === 'fight') {
+        audio.click();
+        el.remove();
         this.startMatch();
       }
     });
-    this.setScreen(el);
+    this.root.appendChild(el);
   }
 
   private startMatch() {
+    this.stopSelectTimer();
     const s = this.setup;
     const n1 = CHAR_TYPES[s.p1].name,
       n2 = CHAR_TYPES[s.p2].name;
@@ -590,6 +803,8 @@ export class UI {
       if (a === 'again') this.startMatch();
       if (a === 'select') {
         this.removeHud();
+        this.ready = { p1: false, p2: false };
+        this.selSlot = 'p1';
         this.showSelect();
       }
       if (a === 'menu') this.showTitle();

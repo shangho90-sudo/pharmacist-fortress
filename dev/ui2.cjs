@@ -1,0 +1,23 @@
+const { chromium, devices } = require('playwright');
+(async () => { const b = await chromium.launch({ args: ['--use-gl=swiftshader','--ignore-gpu-blocklist'] });
+const ctx = await b.newContext(process.argv[2]==='m' ? devices['iPhone 13 landscape'] : { viewport: { width: 1600, height: 900 } }); const p = await ctx.newPage();
+const errs=[]; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type()==='error') errs.push(m.text()); });
+const tag = process.argv[2]||'pc';
+await p.goto('http://127.0.0.1:5173/'); await p.waitForTimeout(2500);
+await p.screenshot({ path: `/tmp/ui/${tag}_title.png` });
+await p.click('[data-a=start]'); await p.waitForTimeout(300);
+await p.screenshot({ path: `/tmp/ui/${tag}_mode.png` });
+await p.click('[data-a=ai]'); await p.waitForTimeout(500);
+await p.screenshot({ path: `/tmp/ui/${tag}_sel1.png` });
+await p.click('.scard[data-id=sagong]'); await p.waitForTimeout(150);
+await p.click('.scard[data-id=sagong]'); await p.waitForTimeout(150); // 결정 → 2P
+await p.click('[data-a=next]'); await p.click('[data-a=next]'); await p.waitForTimeout(150);
+await p.click('[data-a=decide]'); await p.waitForTimeout(300);
+await p.screenshot({ path: `/tmp/ui/${tag}_sel2.png` });
+await p.click('[data-a=go]'); await p.waitForTimeout(400);
+await p.screenshot({ path: `/tmp/ui/${tag}_setup.png` });
+await p.click('[data-a=fight]'); await p.waitForTimeout(3000);
+const st = await p.evaluate(() => { const g = window.__pf.scene.game2; return g ? g.players.map(x => x.charType) : null; });
+await p.screenshot({ path: `/tmp/ui/${tag}_game.png` });
+console.log(tag, JSON.stringify(st), 'errs', errs.join(' | '));
+await b.close(); })();

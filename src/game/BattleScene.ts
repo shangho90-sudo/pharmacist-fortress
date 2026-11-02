@@ -201,6 +201,12 @@ export class BattleScene extends Phaser.Scene {
     this.processEvents();
   }
 
+  /** 전투 종료(타이틀/선택 화면에서는 배경 전투를 돌리지 않음) */
+  stopBattle() {
+    this.clearWorld();
+    (this as any).game2 = undefined;
+  }
+
   private clearWorld() {
     for (const o of this.worldObjs) o.destroy();
     this.worldObjs = [];

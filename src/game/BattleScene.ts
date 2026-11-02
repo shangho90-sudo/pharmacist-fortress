@@ -1037,13 +1037,13 @@ export class BattleScene extends Phaser.Scene {
         // 각도 호 (0°~90° 눈금)
         this.aimGfx.lineStyle(1.5, 0xffffff, 0.35);
         this.aimGfx.beginPath();
-        this.aimGfx.arc(ox, oy, 46, cp.facing === 1 ? -Math.PI / 2 : Math.PI, cp.facing === 1 ? 0 : -Math.PI / 2, false);
+        this.aimGfx.arc(ox, oy, 50, cp.facing === 1 ? -Math.PI / 2 : Math.PI, cp.facing === 1 ? 0 : -Math.PI / 2, false);
         this.aimGfx.strokePath();
         // 조준 화살표: 어두운 외곽선 + 노랑→주황 몸통 + 큰 화살촉, 살짝 맥동
         const local = this.isLocalTurn();
         const pulse = 1 + Math.sin(t * 6) * 0.06;
-        const s0 = 26,
-          L = 72 * pulse; // 시작/끝 거리
+        const s0 = 54,
+          L = 100 * pulse; // 시작/끝 거리
         const px = -dy,
           py = dx; // 수직 방향
         const pt = (d: number, o: number) => ({ x: ox + dx * d + px * o, y: oy + dy * d + py * o });

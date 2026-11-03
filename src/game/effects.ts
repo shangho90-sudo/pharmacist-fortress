@@ -52,6 +52,8 @@ export class Effects {
     const pal = paletteFor(weapon, color);
     const s = r / 35;
     this.signatureImpact(x, y, r, weapon, pal.ring);
+    if (weapon.endsWith('_special') || weapon.endsWith('_ult'))
+      this.skillBurst(x, y, color, weapon.endsWith('_ult'), true);
     // 1. 섬광
     const flash = this.scene.add.image(x, y, 'fx_soft').setBlendMode(Phaser.BlendModes.ADD).setDepth(D_FX + 3).setTint(pal.flash);
     flash.setScale((r * 1.4) / 64);
@@ -179,6 +181,57 @@ export class Effects {
         }
       }
     }, onComplete: () => gfx.destroy() });
+  }
+
+  /** Localized layered bloom and four-point glints, never an opaque screen overlay. */
+  skillBurst(x: number, y: number, color: string, ultimate: boolean, impact = false) {
+    const c = hexNum(color), radius = (ultimate ? 94 : 56) * (impact ? 1.15 : 1);
+    const duration = ultimate ? 1050 : 680;
+    const glow = this.scene.add.image(x, y, 'fx_soft').setDepth(D_FX + 1)
+      .setTint(c).setBlendMode(Phaser.BlendModes.ADD).setAlpha(ultimate ? 0.5 : 0.35)
+      .setDisplaySize(radius * 1.3, radius * 1.3);
+    this.scene.tweens.add({ targets: glow, displayWidth: radius * 3, displayHeight: radius * 3,
+      alpha: 0, duration, ease: 'Cubic.easeOut', onComplete: () => glow.destroy() });
+    const gfx = this.scene.add.graphics().setPosition(x, y).setDepth(D_FX + 3)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    const state = { t: 0 };
+    const count = ultimate ? 20 : 10;
+    this.scene.tweens.add({ targets: state, t: 1, duration, onUpdate: () => {
+      const t = state.t, fade = Math.pow(1 - t, 1.6), expand = 1 - Math.pow(1 - t, 3);
+      gfx.clear();
+      for (let j = 0; j < (ultimate ? 2 : 1); j++) {
+        const r = radius * (0.22 + expand * (1 + j * 0.32));
+        gfx.lineStyle((ultimate ? 3 : 2) * (1 - t) + 0.5, j ? 0xffffff : c, fade * 0.8);
+        gfx.strokeEllipse(0, 0, r * 2, r * (j ? 1.1 : 0.55));
+      }
+      for (let i = 0; i < count; i++) {
+        const a = i / count * Math.PI * 2 + t * (i % 2 ? 0.24 : -0.24);
+        const r = radius * (0.25 + expand * (0.55 + (i % 3) * 0.23));
+        const px = Math.cos(a) * r, py = Math.sin(a) * r * 0.8 - t * 18;
+        const k = (ultimate ? 10 : 7) * fade * (0.5 + 0.5 * Math.pow(Math.sin(t * 13 + i), 2));
+        gfx.lineStyle(ultimate ? 3 : 2, c, fade * 0.45);
+        gfx.lineBetween(px * 0.68, py * 0.68, px, py);
+        gfx.fillStyle(i % 3 ? 0xffffff : c, fade);
+        gfx.fillPoints([
+          { x: px, y: py - k }, { x: px + k * 0.2, y: py - k * 0.2 },
+          { x: px + k * 0.65, y: py }, { x: px + k * 0.2, y: py + k * 0.2 },
+          { x: px, y: py + k }, { x: px - k * 0.2, y: py + k * 0.2 },
+          { x: px - k * 0.65, y: py }, { x: px - k * 0.2, y: py - k * 0.2 },
+        ], true);
+      }
+      if (ultimate) {
+        gfx.lineStyle(2, 0xffffff, fade * 0.55);
+        gfx.lineBetween(-radius * expand * 1.5, 0, radius * expand * 1.5, 0);
+        gfx.lineStyle(8, c, fade * 0.16);
+        gfx.lineBetween(0, -radius * expand * 1.35, 0, radius * expand * 1.35);
+      }
+    }, onComplete: () => gfx.destroy() });
+    this.burst(x, y, 'fx_dot', {
+      speed: { min: 30, max: ultimate ? 180 : 110 },
+      lifespan: { min: 300, max: ultimate ? 900 : 600 },
+      scale: { start: ultimate ? 1 : 0.7, end: 0 }, alpha: { start: 0.9, end: 0 },
+      gravityY: -35, tint: [c, 0xffffff], blendMode: 'ADD',
+    }, ultimate ? 28 : 14, duration + 100);
   }
 
   muzzle(x: number, y: number, angleRad: number, special: boolean, color = '#ffd980') {
@@ -356,10 +409,7 @@ export class Effects {
       .setScale(0.3);
     this.scene.tweens.add({ targets: t, scale: 1, duration: 260, ease: 'Back.easeOut' });
     this.scene.tweens.add({ targets: t, y: y - 24, alpha: 0, delay: 1000, duration: 500, onComplete: () => t.destroy() });
-    if (ult) {
-      const cam = this.scene.cameras.main;
-      cam.flash(180, 255, 255, 255, false);
-    }
+
   }
 
   dust(x: number, y: number) {

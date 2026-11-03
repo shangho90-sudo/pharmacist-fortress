@@ -16,6 +16,7 @@ export function projectileStyle(w: WeaponDef) {
     electric: character === 'gu' || w.trail === 'electric',
     orb: ['orb', 'orb_cross', 'cross', 'dark_orb'].includes(w.look) && asset !== 'rocket' && asset !== 'dragon',
     rocket: asset === 'rocket',
+    tier: w.id.endsWith('_ult') ? 2 : w.id.endsWith('_special') ? 1 : 0,
   };
 }
 
@@ -37,7 +38,7 @@ export class ProjectileVisual {
     this.img = scene.add.image(x, y, this.style.key).setDepth(22);
     this.img.setScale(this.style.width / this.img.width);
     this.glow = scene.add.image(x, y, 'fx_soft').setDepth(20).setTint(this.color).setBlendMode(Phaser.BlendModes.ADD);
-    this.glow.setDisplaySize(this.style.width * 1.6, this.style.width * 1.25).setAlpha(0.36);
+    this.glow.setDisplaySize(this.style.width * (1.6 + this.style.tier * 0.35), this.style.width * (1.25 + this.style.tier * 0.3)).setAlpha(0.36);
     this.ribbon = scene.add.graphics().setDepth(19).setBlendMode(Phaser.BlendModes.ADD);
     this.sparks = scene.add.particles(0, 0, 'fx_dot', {
       emitting: false, maxParticles: 48, lifespan: { min: 160, max: 360 },
@@ -52,7 +53,7 @@ export class ProjectileVisual {
     this.img.setPosition(x, y);
     if (this.style.spinning) this.img.rotation += dt * 12 * facing;
     else this.img.setRotation(this.style.orb ? 0 : angle);
-    this.glow.setPosition(x, y).setAlpha(0.28 + Math.sin(this.scene.time.now * 0.018) * 0.07);
+    this.glow.setPosition(x, y).setAlpha(0.28 + this.style.tier * 0.1 + Math.sin(this.scene.time.now * 0.018) * 0.07);
     this.points.forEach(p => p.age += dt);
     this.points = this.points.filter(p => p.age < 0.22);
     const back = this.style.orb || this.style.spinning ? 0 : this.img.displayWidth * 0.28;
@@ -62,7 +63,7 @@ export class ProjectileVisual {
     if (this.points.length > 18) this.points.shift();
     this.ribbon.clear();
     const points = [...this.points, { x: tx, y: ty, age: 0 }];
-    const width = this.style.rocket ? 12 : this.style.orb ? 15 : 9;
+    const width = (this.style.rocket ? 12 : this.style.orb ? 15 : 9) * (1 + this.style.tier * 0.3);
     for (let i = 1; i < points.length; i++) {
       const a = points[i - 1], b = points[i], fade = Math.max(0, 1 - a.age / 0.22);
       for (const [size, color, opacity] of [[width, this.color, 0.16], [width * 0.4, this.color, 0.65], [1.5, 0xffffff, 0.9]]) {
@@ -81,6 +82,18 @@ export class ProjectileVisual {
         if (!i) this.ribbon.moveTo(px, py); else this.ribbon.lineTo(px, py);
       }
       this.ribbon.strokePath();
+    }
+    if (this.style.tier) {
+      const phase = this.scene.time.now * 0.006;
+      for (let i = 0; i < this.style.tier * 3; i++) {
+        const a = phase + i * Math.PI * 2 / (this.style.tier * 3);
+        const r = this.img.displayWidth * (0.5 + 0.1 * Math.sin(phase + i));
+        const sx = x + Math.cos(a) * r, sy = y + Math.sin(a) * r * 0.6;
+        const k = (3 + this.style.tier * 2) * (0.7 + 0.3 * Math.sin(phase * 3 + i));
+        this.ribbon.lineStyle(1.5, 0xffffff, 0.85);
+        this.ribbon.lineBetween(sx - k, sy, sx + k, sy);
+        this.ribbon.lineBetween(sx, sy - k, sx, sy + k);
+      }
     }
     this.sparkClock += dt;
     if (this.sparkClock >= 1 / 35) {

@@ -826,10 +826,14 @@ export class BattleScene extends Phaser.Scene {
         const isUlt = e.weapon === def.ultimate.weapon,
           isSp = e.weapon === def.special.weapon;
         this.fx.muzzle(e.x, e.y, a, isUlt || isSp, this.weaponColor(e.weapon, p.charType));
-        if (isUlt || isSp) this.fx.skillCall(p.x, p.y - 104, isUlt ? def.ultimate.name : def.special.name, def.palette.glow, isUlt);
+        if (isUlt || isSp) {
+          this.fx.skillCall(p.x, p.y - 104, isUlt ? def.ultimate.name : def.special.name, def.palette.glow, isUlt);
+          this.fx.skillBurst(e.x, e.y, def.palette.glow, isUlt);
+        }
         if (sfx) {
           void audio.attackVoice(p.charType);
           audio.fire(isUlt || isSp);
+          if (isUlt || isSp) audio.skillShimmer(isUlt);
           audio.whistleStart();
         }
         this.camMode = 'projectile';

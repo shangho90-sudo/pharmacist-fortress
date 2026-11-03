@@ -161,12 +161,27 @@ class AudioEngine {
     source.start();
   }
 
+  /** Bell partials and ascending pentatonic glints routed through the SFX volume. */
+  skillShimmer(ultimate = false) {
+    if (!this.ctx) return;
+    const notes = ultimate ? [659.25, 783.99, 987.77, 1318.51, 1567.98, 1975.53, 2637.02]
+      : [987.77, 1318.51, 1567.98, 1975.53];
+    notes.forEach((freq, i) => {
+      const delay = i * (ultimate ? 0.055 : 0.045);
+      this.tone(freq, freq, ultimate ? 0.8 : 0.48, ultimate ? 0.095 : 0.075, 'sine', delay);
+      this.tone(freq * 2.01, freq * 2, 0.22, 0.018, 'sine', delay);
+    });
+    if (ultimate) {
+      [329.63, 493.88, 659.25].forEach(freq => this.tone(freq, freq, 1.1, 0.05, 'sine', 0.15));
+      this.noise(0.45, 1800, 6500, 0.07, 'highpass');
+    }
+  }
+
   fire(special = false) {
     this.noise(0.25, 2500, 300, 0.5);
     this.tone(special ? 180 : 240, 60, 0.22, 0.5, 'triangle');
     if (special) {
-      this.tone(400, 1600, 0.35, 0.18, 'sawtooth');
-      this.tone(800, 2400, 0.3, 0.12, 'square', 0.05);
+      this.tone(400, 1200, 0.2, 0.06, 'triangle');
     }
   }
 

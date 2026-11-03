@@ -218,8 +218,10 @@ export class TerrainView {
           } else {
             // 암석: 가로로 늘어난 노이즈 + 잔무늬 → 5단계 포스터라이즈
             // 가로로 길게 늘어난 암석층 + 잔무늬 → 5단계 포스터라이즈
-            const n = fbm2(x / (44 * g), y / (11 * g), seed) * 0.7 + fbm2(x / (7 * g), y / (5 * g), seed + 40, 2) * 0.3;
-            let band = Math.floor(((n - 0.28) / 0.44) * 4.99);
+            // 큰 지층(가로로 길게) 위주 + 잔무늬는 약하게 → 얼룩덜룩함 감소
+            const strata = Math.sin((depth + vnoise(x / 60, y / 60, seed + 5) * 24) / 9) * 0.5 + 0.5;
+            const n = fbm2(x / (60 * g), y / (14 * g), seed) * 0.62 + strata * 0.26 + fbm2(x / (9 * g), y / (6 * g), seed + 40, 2) * 0.12;
+            let band = Math.floor(((n - 0.3) / 0.4) * 4.99);
             // 깊이에 따른 명암 (위 밝게, 깊을수록 어둡게)
             if (depth < topDepth + 10) band += 1;
             if (depth > 110) band -= 1;
@@ -237,8 +239,8 @@ export class TerrainView {
             if (on && r < 0.006 && depth > topDepth + 6) c = [...crack];
             else if (on && r2 < 0.006 && depth > topDepth + 6) c = mix(c, ramp[Math.min(4, band + 2)], 0.7);
             // 흙덩이 질감 (숲 테마): 작은 둥근 덩어리마다 위 밝게 / 아래 어둡게
-            if (th.deco && depth > topDepth) {
-              const cc = 11;
+            if (depth > topDepth) {
+              const cc = th.deco ? 11 : 14;
               const qx = Math.floor((x + (Math.floor(y / cc) % 2) * 5) / cc),
                 qy = Math.floor(y / cc);
               const ox = qx * cc - (Math.floor(y / cc) % 2) * 5 + cc / 2 + (hash2(qx, qy, seed + 61) - 0.5) * 4;
@@ -284,19 +286,56 @@ export class TerrainView {
                 c = mix(c, [0, 0, 0], 0.35); // 바위 아래 그림자
               }
             }
-            if (th.veins) {
-              // 드문드문 이어지는 용암 균열 (밝은 심지 + 붉은 테두리)
-              const v = Math.abs(fbm2(x / 70, y / 70, seed + 31, 3) - 0.5);
-              const gate = vnoise(x / 60, y / 60, seed + 33) > 0.6;
-              if (gate && v < 0.006 && depth > 12) c = mix([255, 120, 30], [255, 220, 100], vnoise(x / 3, y / 3, seed));
-              else if (gate && v < 0.014 && depth > 12) c = mix(c, [170, 50, 20], 0.5);
-            }
             if (th.roots && depth < 70 && Math.abs(fbm2(x / 14, y / 30, seed + 21, 2) - 0.5) < 0.012) c = [74, 46, 26];
             if (gem && depth > 40 && hash2(x >> 1, y >> 1, seed + 50) < 0.0015) c = [...gem];
           }
         }
         this.base[i] = rgba(c[0], c[1], c[2]);
         depth++;
+      }
+    }
+    // 용암 균열: 지그재그로 갈라지는 직선 균열을 따로 그림 (밝은 심지 + 붉은 테두리 + 은은한 빛)
+    if (th.veins) {
+      const put = (x: number, y: number, col: number[], k: number) => {
+        x = Math.round(x);
+        y = Math.round(y);
+        if (x < 0 || y < 0 || x >= w || y >= h || !mask[y * w + x]) return;
+        const i = y * w + x;
+        const o = this.base[i];
+        this.base[i] = rgba((o & 255) * (1 - k) + col[0] * k, ((o >> 8) & 255) * (1 - k) + col[1] * k, ((o >> 16) & 255) * (1 - k) + col[2] * k);
+      };
+      const crack = (x: number, y: number, ang: number, len: number, depthLeft: number) => {
+        for (let sgi = 0; sgi < len; sgi++) {
+          const sl = 6 + hash2(sgi, depthLeft, seed + Math.floor(x)) * 10;
+          const a2 = ang + (hash2(sgi, 7, seed + Math.floor(y)) - 0.5) * 1.1;
+          const nx = x + Math.cos(a2) * sl,
+            ny = y + Math.sin(a2) * sl;
+          const steps = Math.ceil(sl);
+          for (let t = 0; t <= steps; t++) {
+            const px = x + ((nx - x) * t) / steps,
+              py = y + ((ny - y) * t) / steps;
+            for (let oy = -3; oy <= 3; oy++)
+              for (let ox = -3; ox <= 3; ox++) {
+                const d = Math.abs(ox) + Math.abs(oy);
+                if (d >= 3) put(px + ox, py + oy, [150, 40, 18], 0.25);
+                else if (d === 2) put(px + ox, py + oy, [215, 70, 20], 0.55);
+              }
+            put(px, py, [255, 214, 110], 1);
+            put(px + 1, py, [255, 150, 40], 0.9);
+          }
+          x = nx;
+          y = ny;
+          if (depthLeft > 0 && hash2(sgi, 9, seed + Math.floor(x)) < 0.18) crack(x, y, ang + (hash2(sgi, 11, seed) < 0.5 ? -0.9 : 0.9), Math.floor(len / 2), depthLeft - 1);
+        }
+      };
+      const count = Math.round(w / 110);
+      for (let k = 0; k < count; k++) {
+        const cx = hash2(k, 1, seed + 91) * w;
+        const top = this.terrain.surfaceBelow(cx, 0);
+        if (top < 0) continue;
+        const cy = top + 30 + hash2(k, 2, seed + 91) * 260;
+        const ang = (hash2(k, 3, seed + 91) < 0.5 ? 0.35 : Math.PI - 0.35) + (hash2(k, 4, seed + 91) - 0.5) * 0.6;
+        crack(cx, cy, ang, 4 + Math.floor(hash2(k, 5, seed + 91) * 6), 2);
       }
     }
     // 지표 크레이터 장식 (달)

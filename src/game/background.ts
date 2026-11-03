@@ -50,6 +50,11 @@ export function skyCanvas(w: number, h: number, theme: 'herb' | 'volcano' | 'sky
     }
   }
   if (theme === 'volcano') {
+    // 별 대신 떠다니는 화산재 반점
+    for (let i = 0; i < (w * h) / 900; i++) {
+      ctx.fillStyle = `rgba(255,${120 + Math.floor(Math.random() * 80)},60,${0.15 + Math.random() * 0.35})`;
+      ctx.fillRect(Math.random() * w, Math.random() * h * 0.7, 1, 1);
+    }
     // 붉은 화산 빛 + 연기 띠
     const g2 = ctx.createRadialGradient(w * 0.5, h, 0, w * 0.5, h, h * 0.9);
     g2.addColorStop(0, 'rgba(255,140,40,0.55)');
@@ -207,106 +212,264 @@ export function buildForestLayers(viewW: number, viewH: number, worldW: number, 
   return layers;
 }
 
-/** 화산 연구소 레이어 */
+/** 부드러운 뭉게 형태(원 여러 개의 그라디언트 합성) */
+function puff(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, light: string, mid: string, dark: string, rng: Rng, n = 6) {
+  for (let k = 0; k < n; k++) {
+    const bx = x + rng.range(-r, r),
+      by = y + rng.range(-r * 0.35, r * 0.2),
+      br = r * rng.range(0.45, 0.8);
+    const g = ctx.createRadialGradient(bx - br * 0.3, by - br * 0.45, br * 0.1, bx, by, br);
+    g.addColorStop(0, light);
+    g.addColorStop(0.6, mid);
+    g.addColorStop(1, dark);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(bx, by, br, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** 능선 실루엣 + 위쪽 가장자리 림라이트 */
+function ridge(ctx: CanvasRenderingContext2D, hs: number[], h: number, top: string, bottom: string, rim: string, rimW = 2) {
+  const w = hs.length;
+  const minY = Math.min(...hs);
+  const g = ctx.createLinearGradient(0, minY, 0, h);
+  g.addColorStop(0, top);
+  g.addColorStop(1, bottom);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  for (let x = 0; x < w; x++) ctx.lineTo(x, hs[x]);
+  ctx.lineTo(w, h);
+  ctx.fill();
+  ctx.strokeStyle = rim;
+  ctx.lineWidth = rimW;
+  ctx.beginPath();
+  for (let x = 0; x < w; x++) (x ? ctx.lineTo(x, hs[x] + 1) : ctx.moveTo(x, hs[x] + 1));
+  ctx.stroke();
+}
+
+/** 화산 연구소: 화산재 구름 · 분화하는 원경 화산 · 용암 강 · 연구소 단지 */
 export function buildVolcanoLayers(viewW: number, viewH: number, worldW: number, worldH: number, camTop: number, seed: number): BgLayer[] {
   const rng = new Rng(seed);
   const out: BgLayer[] = [];
-  const defs = [
-    { f: 0.12, base: 0.6, amp: 220, col: '#3a1220', glow: '#ff6a2a' },
-    { f: 0.3, base: 0.66, amp: 150, col: '#22080f', glow: '#ff9a3a' },
-  ];
-  defs.forEach((d, li) => {
-    const w = Math.ceil(viewW + (worldW - viewW) * d.f) + 4;
-    const fy = d.f * 0.6;
-    const h = Math.ceil(viewH + (worldH - viewH - camTop) * fy) + 4;
+  const size = (f: number) => ({ w: Math.ceil(viewW + (worldW - viewW) * f) + 4, h: Math.ceil(viewH + (worldH - viewH - camTop) * f * 0.6) + 4 });
+  // 1) 원경: 화산재 구름 + 거대한 화산 (분화 빛)
+  {
+    const f = 0.08;
+    const { w, h } = size(f);
     const c = makeCanvas(w, h);
     const ctx = c.getContext('2d')!;
-    const hs = fbm(rng, w, 4).map((v, x) => {
-      // 뾰족한 화산 봉우리
-      const peak = Math.max(0, 1 - Math.abs(((x / w) * (li ? 5 : 3)) % 1 - 0.5) * 2.6);
-      return h * d.base - v * d.amp * 0.5 - peak * peak * d.amp;
-    });
-    silhouette(ctx, hs, d.col, h);
-    // 용암 흐름 (능선에서 흘러내림)
-    for (let i = 0; i < w / 160; i++) {
-      let x = Math.floor(rng.range(0, w));
-      let y = hs[x] + 2;
-      ctx.fillStyle = d.glow;
-      for (let k = 0; k < 60; k++) {
-        ctx.fillRect(x, y, 2, 2);
-        y += 2;
-        x += rng.int(-1, 1);
-        if (x < 0 || x >= w) break;
+    for (let i = 0; i < w / 90; i++) puff(ctx, rng.range(0, w), rng.range(h * 0.05, h * 0.35), rng.range(40, 80), 'rgba(120,60,70,0.55)', 'rgba(70,30,45,0.45)', 'rgba(40,16,28,0)', rng, 5);
+    const peaks = Math.max(2, Math.round(w / 700));
+    for (let p = 0; p < peaks; p++) {
+      const cx = (p + 0.5) * (w / peaks) + rng.range(-80, 80);
+      const base = h * 0.62,
+        peakH = rng.range(h * 0.32, h * 0.42),
+        hw = rng.range(260, 380);
+      const hs: number[] = [];
+      for (let x = 0; x < w; x++) {
+        const d = Math.abs(x - cx) / hw;
+        const cone = d < 1 ? (1 - d) * (1 - d * 0.35) : 0;
+        const crater = Math.abs(x - cx) < 26 ? 10 * (1 - Math.abs(x - cx) / 26) : 0;
+        hs.push(base - cone * peakH + crater + (d < 1 ? Math.sin(x / 9) * 2 : 0));
       }
-    }
-    // 연구소 실루엣 (가까운 층)
-    if (li === 1) {
-      for (let i = 0; i < 5; i++) {
-        const x = Math.floor(rng.range(0, w - 60));
-        const bw = rng.int(30, 60),
-          bh = rng.int(40, 110);
-        const gy = Math.round(hs[x + (bw >> 1)]) + 6;
-        ctx.fillStyle = '#16060c';
-        ctx.fillRect(x, gy - bh, bw, bh);
-        ctx.fillRect(x + bw / 2 - 2, gy - bh - 20, 4, 20);
-        ctx.fillStyle = '#ffb03a';
-        for (let wy = gy - bh + 8; wy < gy - 8; wy += 10) for (let wx = x + 5; wx < x + bw - 5; wx += 9) if (rng.next() < 0.55) ctx.fillRect(wx, wy, 3, 4);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cx - hw, 0, hw * 2, h);
+      ctx.clip();
+      ridge(ctx, hs, h, '#4a1e26', '#1c0a10', 'rgba(255,120,60,0.55)');
+      // 분화구 빛 + 용암 줄기
+      const top = base - peakH + 8;
+      const glow = ctx.createRadialGradient(cx, top, 2, cx, top, 120);
+      glow.addColorStop(0, 'rgba(255,220,120,0.95)');
+      glow.addColorStop(0.25, 'rgba(255,120,40,0.55)');
+      glow.addColorStop(1, 'rgba(255,60,20,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(cx - 130, top - 130, 260, 260);
+      for (let k = 0; k < 3; k++) {
+        let x = cx + rng.range(-8, 8),
+          y = top + 4;
+        ctx.strokeStyle = k ? 'rgba(255,110,30,0.85)' : 'rgba(255,200,90,0.95)';
+        ctx.lineWidth = k ? 3 : 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        const dir = rng.next() < 0.5 ? -1 : 1;
+        for (let s2 = 0; s2 < 40; s2++) {
+          x += dir * rng.range(1, 4);
+          y += rng.range(3, 6);
+          ctx.lineTo(x, y);
+        }
+        ctx.stroke();
       }
+      ctx.restore();
+      // 연기 기둥
+      for (let k = 0; k < 7; k++) puff(ctx, cx + k * 10 + rng.range(-10, 10), base - peakH - 20 - k * 26, 26 + k * 5, 'rgba(110,70,75,0.6)', 'rgba(60,32,40,0.5)', 'rgba(30,14,20,0)', rng, 4);
     }
-    out.push({ canvas: c, factor: d.f, y: camTop * fy });
-  });
+    out.push({ canvas: c, factor: f, y: camTop * f * 0.6 });
+  }
+  // 2) 중경: 험준한 능선 + 용암 폭포 + 연구소
+  {
+    const f = 0.25;
+    const { w, h } = size(f);
+    const c = makeCanvas(w, h);
+    const ctx = c.getContext('2d')!;
+    const hs = fbm(rng, w, 5).map((v, x) => h * 0.6 - v * 120 - Math.abs(Math.sin(x / 130)) * 40);
+    ridge(ctx, hs, h, '#3a1418', '#14060a', 'rgba(255,140,70,0.45)', 2);
+    // 바위 결 (사선 하이라이트)
+    ctx.strokeStyle = 'rgba(120,50,50,0.35)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < w / 12; i++) {
+      const x = rng.range(0, w);
+      const y = hs[Math.floor(x)] + rng.range(6, 60);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + rng.range(6, 16), y + rng.range(8, 20));
+      ctx.stroke();
+    }
+    // 용암 폭포
+    for (let i = 0; i < w / 500; i++) {
+      const x = rng.range(40, w - 40);
+      const y0 = hs[Math.floor(x)] + 4;
+      const g = ctx.createLinearGradient(0, y0, 0, h);
+      g.addColorStop(0, 'rgba(255,230,140,1)');
+      g.addColorStop(0.3, 'rgba(255,130,40,0.95)');
+      g.addColorStop(1, 'rgba(200,40,10,0.6)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - 3, y0, 7, h - y0);
+      const gl = ctx.createRadialGradient(x, y0 + 60, 2, x, y0 + 60, 70);
+      gl.addColorStop(0, 'rgba(255,120,40,0.35)');
+      gl.addColorStop(1, 'rgba(255,120,40,0)');
+      ctx.fillStyle = gl;
+      ctx.fillRect(x - 70, y0 - 10, 140, 140);
+    }
+    // 연구소 (굴뚝·배관·창문 불빛·경고등)
+    for (let i = 0; i < w / 420; i++) {
+      const x = Math.floor(rng.range(30, w - 120));
+      const bw = rng.int(50, 90),
+        bh = rng.int(50, 110);
+      const gy = Math.round(hs[Math.min(w - 1, x + (bw >> 1))]) + 10;
+      const bg = ctx.createLinearGradient(x, 0, x + bw, 0);
+      bg.addColorStop(0, '#2a2028');
+      bg.addColorStop(0.5, '#3a2c36');
+      bg.addColorStop(1, '#1a1218');
+      ctx.fillStyle = bg;
+      ctx.fillRect(x, gy - bh, bw, bh);
+      ctx.fillStyle = '#4a3a44';
+      ctx.fillRect(x, gy - bh, bw, 3);
+      ctx.fillStyle = '#2a2028';
+      ctx.fillRect(x + bw * 0.7, gy - bh - 34, 9, 34);
+      puff(ctx, x + bw * 0.7 + 4, gy - bh - 46, 14, 'rgba(160,140,140,0.5)', 'rgba(90,70,75,0.4)', 'rgba(40,30,35,0)', rng, 3);
+      for (let wy = gy - bh + 10; wy < gy - 8; wy += 11)
+        for (let wx = x + 6; wx < x + bw - 6; wx += 10) {
+          if (rng.next() < 0.6) {
+            ctx.fillStyle = rng.next() < 0.2 ? '#7ad8ff' : '#ffc060';
+            ctx.fillRect(wx, wy, 5, 5);
+            ctx.fillStyle = 'rgba(255,200,120,0.18)';
+            ctx.fillRect(wx - 2, wy - 2, 9, 9);
+          }
+        }
+      ctx.fillStyle = '#ff4040';
+      ctx.fillRect(x + bw * 0.7 + 3, gy - bh - 37, 3, 3);
+      ctx.strokeStyle = '#5a4650';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x + bw, gy - bh * 0.4);
+      ctx.lineTo(x + bw + 40, gy - bh * 0.4);
+      ctx.lineTo(x + bw + 40, gy);
+      ctx.stroke();
+    }
+    out.push({ canvas: c, factor: f, y: camTop * f * 0.6 });
+  }
   return out;
 }
 
-/** 하늘의 약국 레이어: 먼 구름 띠 + 떠 있는 섬 실루엣 */
+/** 하늘의 약국: 겹겹이 쌓인 뭉게구름 바다 · 폭포가 흐르는 원경 섬 · 약국 */
 export function buildSkyLayers(viewW: number, viewH: number, worldW: number, worldH: number, camTop: number, seed: number): BgLayer[] {
   const rng = new Rng(seed);
   const out: BgLayer[] = [];
-  const defs = [
-    { f: 0.1, col: '#ffffff', alpha: 0.9 },
-    { f: 0.25, col: '#c8d8f0', alpha: 1 },
-  ];
-  defs.forEach((d, li) => {
-    const w = Math.ceil(viewW + (worldW - viewW) * d.f) + 4;
-    const fy = d.f * 0.6;
-    const h = Math.ceil(viewH + (worldH - viewH - camTop) * fy) + 4;
+  const size = (f: number) => ({ w: Math.ceil(viewW + (worldW - viewW) * f) + 4, h: Math.ceil(viewH + (worldH - viewH - camTop) * f * 0.6) + 4 });
+  // 1) 원경 구름 바다 (3단 뭉게)
+  {
+    const f = 0.08;
+    const { w, h } = size(f);
     const c = makeCanvas(w, h);
     const ctx = c.getContext('2d')!;
-    if (li === 0) {
-      // 아래쪽 두꺼운 구름 바다
-      const hs = fbm(rng, w, 4).map((v) => h * 0.7 - v * 80);
-      for (let x = 0; x < w; x++) {
-        for (let y = Math.round(hs[x]); y < h; y++) {
-          const k = Math.min(1, (y - hs[x]) / 30);
-          ctx.fillStyle = k < 0.15 ? '#ffffff' : k < 0.6 ? '#eef6ff' : '#dbe9fb';
-          ctx.fillRect(x, y, 1, 1);
-        }
+    const rows: [number, string, string, string, number][] = [
+      [0.5, 'rgba(255,255,255,0.95)', 'rgba(222,236,252,0.9)', 'rgba(190,212,240,0)', 46],
+      [0.62, '#ffffff', '#e8f2fd', 'rgba(200,220,244,0)', 54],
+      [0.74, '#ffffff', '#f0f6fe', 'rgba(214,230,248,0)', 62],
+    ];
+    for (const [yy, l, m, d, r] of rows) {
+      for (let x = -40; x < w + 40; x += r * 0.9) puff(ctx, x, h * yy + rng.range(-10, 10), r, l, m, d, rng, 5);
+      ctx.fillStyle = m;
+      ctx.fillRect(0, h * yy + r * 0.4, w, h);
+    }
+    out.push({ canvas: c, factor: f, y: camTop * f * 0.6 });
+  }
+  // 2) 원경 공중섬 (폭포·약국 건물)
+  {
+    const f = 0.2;
+    const { w, h } = size(f);
+    const c = makeCanvas(w, h);
+    const ctx = c.getContext('2d')!;
+    for (let i = 0; i < w / 260; i++) {
+      const cx = rng.range(60, w - 60),
+        cy = rng.range(h * 0.22, h * 0.5),
+        hw = rng.range(34, 70);
+      // 섬 몸통 (아래로 뾰족, 그라디언트)
+      const g = ctx.createLinearGradient(0, cy, 0, cy + hw * 1.1);
+      g.addColorStop(0, '#b89a7a');
+      g.addColorStop(0.5, '#8e7462');
+      g.addColorStop(1, 'rgba(120,130,170,0.6)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, cy);
+      ctx.quadraticCurveTo(cx - hw * 0.6, cy + hw * 0.6, cx, cy + hw * 1.1);
+      ctx.quadraticCurveTo(cx + hw * 0.6, cy + hw * 0.6, cx + hw, cy);
+      ctx.fill();
+      // 잔디 윗면
+      ctx.fillStyle = '#86d45a';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, hw, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#c4f08a';
+      ctx.beginPath();
+      ctx.ellipse(cx - hw * 0.2, cy - 2, hw * 0.6, 2.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // 나무
+      for (let k = 0; k < 2; k++) puff(ctx, cx + rng.range(-hw * 0.6, hw * 0.6), cy - 10, 10, '#a8e46a', '#5aa84a', 'rgba(60,120,60,0)', rng, 3);
+      // 폭포
+      if (rng.next() < 0.6) {
+        const fx = cx + rng.range(-hw * 0.4, hw * 0.4);
+        const fg = ctx.createLinearGradient(0, cy, 0, cy + 140);
+        fg.addColorStop(0, 'rgba(230,248,255,0.9)');
+        fg.addColorStop(1, 'rgba(230,248,255,0)');
+        ctx.fillStyle = fg;
+        ctx.fillRect(fx - 3, cy + 3, 6, 140);
       }
-    } else {
-      // 떠 있는 섬 실루엣 + 약국 건물
-      for (let i = 0; i < w / 220; i++) {
-        const cx = rng.range(40, w - 40),
-          cy = rng.range(h * 0.25, h * 0.6),
-          hw = rng.range(26, 60);
-        for (let x = Math.floor(cx - hw); x <= cx + hw; x++) {
-          const u = (x - cx) / hw;
-          const e = 1 - u * u;
-          ctx.fillStyle = '#9fb8dc';
-          ctx.fillRect(x, Math.round(cy), 1, Math.round(4 + e * hw * 0.9));
-          ctx.fillStyle = '#b6e09a';
-          ctx.fillRect(x, Math.round(cy) - 1, 1, 3);
-        }
-        if (rng.next() < 0.5) {
-          ctx.fillStyle = '#e8f0ff';
-          ctx.fillRect(cx - 12, cy - 18, 24, 18);
-          ctx.fillStyle = '#4cd28a';
-          ctx.fillRect(cx - 2, cy - 30, 4, 10);
-          ctx.fillRect(cx - 5, cy - 27, 10, 4);
-        }
+      // 약국 건물 (흰 벽 + 초록 십자)
+      if (rng.next() < 0.55) {
+        const bx = cx + rng.range(-hw * 0.4, hw * 0.1);
+        ctx.fillStyle = '#f4f8ff';
+        ctx.fillRect(bx, cy - 22, 26, 22);
+        ctx.fillStyle = '#cfd8ea';
+        ctx.fillRect(bx + 18, cy - 22, 8, 22);
+        ctx.fillStyle = '#4a7ac8';
+        ctx.beginPath();
+        ctx.moveTo(bx - 3, cy - 22);
+        ctx.lineTo(bx + 13, cy - 32);
+        ctx.lineTo(bx + 29, cy - 22);
+        ctx.fill();
+        ctx.fillStyle = '#3ad06a';
+        ctx.fillRect(bx + 10, cy - 18, 6, 2);
+        ctx.fillRect(bx + 12, cy - 20, 2, 6);
       }
     }
-    out.push({ canvas: c, factor: d.f, y: camTop * fy });
-  });
+    // 가까운 얇은 구름 띠
+    for (let i = 0; i < w / 160; i++) puff(ctx, rng.range(0, w), rng.range(h * 0.55, h * 0.75), rng.range(24, 40), 'rgba(255,255,255,0.85)', 'rgba(240,247,255,0.7)', 'rgba(230,240,255,0)', rng, 4);
+    out.push({ canvas: c, factor: f, y: camTop * f * 0.6 });
+  }
   return out;
 }
 

@@ -26,8 +26,8 @@ export const MAP_INFO: Record<MapId, MapInfo> = {
   ice_peaks: { id: 'ice_peaks', name: '빙결 설산', icon: '❄️', description: '얼음 성채 아래 계단식 설벽과 얼어붙은 호수', gravityScale: 1, windScale: 1.2, liquidY: 1010, liquid: 'ice_water', backdrop: 'ice_peaks', tags: ['강풍', '나무 다리', '호수 추락'] },
   moon_base: { id: 'moon_base', name: '달 기지', icon: '🌙', description: '지구가 떠오른 달 표면과 제약 우주정거장', gravityScale: 0.62, windScale: 0, liquidY: null, liquid: null, backdrop: null, tags: ['저중력', '무풍', '동굴'] },
   pirate_cove: { id: 'pirate_cove', name: '해적의 만', icon: '🏴‍☠️', description: '난파선이 잠든 만, 양쪽 해안의 나무 부두', gravityScale: 1, windScale: 1, liquidY: 880, liquid: 'water', backdrop: 'pirate_cove', tags: ['바다 추락', '부두', '암초'] },
-  volcano_lab: { id: 'volcano_lab', name: '화산 연구소', icon: '🌋', description: '용암 바다 위 현무암 지대와 거대한 분화구', gravityScale: 1, windScale: 0.8, liquidY: 1000, liquid: 'lava', backdrop: null, tags: ['용암', '험준한 지형'] },
-  sky_pharmacy: { id: 'sky_pharmacy', name: '하늘의 약국', icon: '☁️', description: '구름 위에 떠 있는 약국 섬들', gravityScale: 1, windScale: 1.3, liquidY: null, liquid: null, backdrop: null, tags: ['공중섬', '낙하 주의', '강풍'] },
+  volcano_lab: { id: 'volcano_lab', name: '화산 연구소', icon: '🌋', description: '용암 바다 위 현무암 지대와 거대한 분화구', gravityScale: 1, windScale: 0.8, liquidY: 1000, liquid: 'lava', backdrop: 'volcano_lab', tags: ['용암', '험준한 지형'] },
+  sky_pharmacy: { id: 'sky_pharmacy', name: '하늘의 약국', icon: '☁️', description: '구름 위에 떠 있는 약국 섬들', gravityScale: 1, windScale: 1.3, liquidY: null, liquid: null, backdrop: 'sky_pharmacy', tags: ['공중섬', '낙하 주의', '강풍'] },
 };
 
 export const MAP_LIST: MapId[] = ['herb_forest', 'ice_peaks', 'moon_base', 'pirate_cove', 'volcano_lab', 'sky_pharmacy'];

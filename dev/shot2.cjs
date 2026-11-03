@@ -4,7 +4,7 @@ const errs=[]; p.on('pageerror', e => errs.push(e.message)); p.on('console', m =
 const map = process.argv[2] || 'herb_forest', tag = process.argv[3] || map;
 await p.goto('http://127.0.0.1:5173/'); await p.waitForTimeout(2000);
 await p.click('[data-a=start]'); await p.waitForTimeout(300); await p.click('[data-a=ai]'); await p.waitForTimeout(400);
-await p.click('.ntile[data-id=paeng]'); await p.click('.ntile[data-id=jo]'); await p.click(`.nmap[data-map=${map}]`); await p.click('[data-a=start]');
+await p.click('.npanel.p1'); await p.click('.ntile[data-id=paeng]'); await p.click('.ntile[data-id=jo]'); await p.click(`.nmap[data-map=${map}]`); await p.click('[data-a=start]');
 for (let i = 0; i < 80; i++) { const ok = await p.evaluate(() => { const s = window.__pf.scene; return s.isLocalTurn() && s.game2.canControl; }); if (ok) break; await p.waitForTimeout(400); }
 await p.waitForTimeout(700);
 await p.screenshot({ path: `/tmp/ui/g_${tag}.png` });

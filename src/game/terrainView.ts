@@ -135,12 +135,7 @@ export class TerrainView {
         const tex = scene.textures.createCanvas(key, w, h)!;
         const img = scene.add.image(x, y, key).setOrigin(0, 0).setDepth(depth);
         this.chunks.push({ cx, cy, x, y, w, h, tex, img });
-        // 파괴되지 않는 뒷벽(배경): 초기 지형을 어둡게 한 번만 그린다 → 분화구 안이 동굴 벽처럼 보임
-        const bkey = key + '_wall';
-        const btex = scene.textures.createCanvas(bkey, w, h)!;
-        this.paintWall(btex, x, y, w, h);
-        btex.refresh();
-        this.walls.push({ tex: btex, img: scene.add.image(x, y, bkey).setOrigin(0, 0).setDepth(depth - 1) });
+        // 뒷벽은 그리지 않음: 파괴된 자리는 완전히 비워 배경이 그대로 보이게 한다
       }
     }
     this.redraw({ x: 0, y: 0, w: terrain.w, h: terrain.h });
@@ -157,26 +152,6 @@ export class TerrainView {
       w.tex.destroy();
     }
     this.walls = [];
-  }
-
-  private paintWall(tex: Phaser.Textures.CanvasTexture, x0: number, y0: number, w: number, h: number) {
-    const ctx = tex.getContext();
-    const img = ctx.createImageData(w, h);
-    const out = new Uint32Array(img.data.buffer);
-    const W = this.terrain.w;
-    const m = this.terrain.mask;
-    for (let y = 0; y < h; y++)
-      for (let x = 0; x < w; x++) {
-        const i = (y0 + y) * W + x0 + x;
-        if (!m[i]) continue;
-        const c = this.base[i];
-        const r = c & 255,
-          g = (c >> 8) & 255,
-          b = (c >> 16) & 255;
-        // 같은 지형 색을 어둡게 + 남색으로 살짝 → 맵마다 자연스러운 동굴 벽
-        out[y * w + x] = rgba(r * 0.3 + 10, g * 0.3 + 10, b * 0.34 + 22);
-      }
-    ctx.putImageData(img, 0, 0);
   }
 
   /** 땅 픽셀의 기본 색 (파편 색상 추출용) */
@@ -364,7 +339,7 @@ export class TerrainView {
       for (let x = x0; x <= x1; x++) {
         const d = Math.hypot(x - cx, y - cy);
         if (d > R) continue;
-        const v = Math.round(Math.max(0, Math.min(1, (R - d) / 9)) * 150 + hash2(x, y, 3) * 30);
+        const v = Math.round(Math.max(0, Math.min(1, (R - d) / 9)) * 70 + hash2(x, y, 3) * 15);
         const i = y * w + x;
         if (v > this.scorch[i]) this.scorch[i] = Math.min(190, v);
       }

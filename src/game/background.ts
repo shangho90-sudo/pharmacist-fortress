@@ -1,11 +1,35 @@
 // 약초의 숲 다층 패럴랙스 배경 (절차적 픽셀아트)
 import { Rng } from '../core/rng';
 import { makeCanvas, shade } from './art';
+import { makeCluster, makeMushroom, MUSH_RES, type MushKind, type MushSprite } from './mushrooms';
 
 export interface BgLayer {
   canvas: HTMLCanvasElement;
   factor: number;
   y: number;
+  /** 캔버스 텍셀/월드px 비율 (HD 레이어) */
+  res?: number;
+  /** 잘라낸 위쪽 여백 (월드 px) */
+  oy?: number;
+}
+
+/** 투명 위/아래 행을 잘라 오버드로를 줄인다 (패럴랙스 위치는 oy로 보정) */
+function cropRows(l: BgLayer): BgLayer {
+  const c = l.canvas;
+  const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+  const rowHas = (y: number) => {
+    for (let x = 0, i = y * c.width * 4 + 3; x < c.width; x++, i += 4) if (d[i]) return true;
+    return false;
+  };
+  let y0 = 0,
+    y1 = c.height - 1;
+  while (y0 < y1 && !rowHas(y0)) y0++;
+  while (y1 > y0 && !rowHas(y1)) y1--;
+  const res = l.res ?? 1;
+  y0 -= y0 % res;
+  const out = makeCanvas(c.width, y1 - y0 + 1);
+  out.getContext('2d')!.drawImage(c, 0, -y0);
+  return { ...l, canvas: out, oy: (l.oy ?? 0) + y0 / res };
 }
 
 function fbm(rng: Rng, n: number, octaves = 4): number[] {
@@ -503,8 +527,9 @@ export function buildMushroomLayer(viewW: number, viewH: number, worldW: number,
   const w = Math.ceil(viewW + (worldW - viewW) * f) + 4;
   const fy = f * 0.6;
   const h = Math.ceil(viewH + (worldH - viewH - camTop) * fy) + 4;
-  const c = makeCanvas(w, h);
+  const c = makeCanvas(w * MUSH_RES, h * MUSH_RES);
   const ctx = c.getContext('2d')!;
+  ctx.scale(MUSH_RES, MUSH_RES);
   const ground = h * 0.56;
   // 덤불 띠 (바닥 연결): 아래로 갈수록 짙은 숲 그늘
   const hs = fbm(rng, w, 4).map((v) => ground - v * 70);
@@ -520,92 +545,12 @@ export function buildMushroomLayer(viewW: number, viewH: number, worldW: number,
     [0, 12, ['#8fd04a', '#3f8a3a', '#245a2e']],
     [12, 10, ['#b4ec5a', '#5aa83a', '#2f6a34']],
   ];
-  for (const [dy, step, cols] of rows) {
-    for (let i = 0; i < w / step; i++) {
-      const x = rng.range(0, w);
-      const y = hs[Math.floor(x)] + dy + rng.range(-4, 6);
-      const r = rng.range(9, 20);
-      const gr = ctx.createRadialGradient(x - r * 0.35, y - r * 0.45, 1, x, y, r);
-      gr.addColorStop(0, cols[0]);
-      gr.addColorStop(0.55, cols[1]);
-      gr.addColorStop(1, cols[2]);
-      ctx.fillStyle = gr;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  // 거대 버섯
-  const caps = [
-    ['#ffd0e6', '#ff7ab0', '#b03a78'],
-    ['#f0d4ff', '#c07aff', '#6a2ab0'],
-    ['#ffe0d0', '#ff8a6a', '#b0402a'],
-  ];
-  const count = Math.max(4, Math.round(w / 260));
-  for (let i = 0; i < count; i++) {
-    const x = (i + rng.range(0.2, 0.8)) * (w / count);
-    const gy = hs[Math.floor(Math.min(w - 1, x))] + 14;
-    const size = rng.range(40, 80);
-    const [cl, cm, cd] = caps[rng.int(0, caps.length - 1)];
-    const stemH = size * rng.range(1.3, 1.9),
-      stemW = size * 0.32;
-    // 줄기 (원통 그라디언트)
-    const sg = ctx.createLinearGradient(x - stemW / 2, 0, x + stemW / 2, 0);
-    sg.addColorStop(0, '#fff8ec');
-    sg.addColorStop(0.5, '#f0e2c8');
-    sg.addColorStop(1, '#b8a080');
-    ctx.fillStyle = sg;
-    ctx.beginPath();
-    ctx.moveTo(x - stemW * 0.42, gy - stemH);
-    ctx.quadraticCurveTo(x - stemW * 0.62, gy - stemH * 0.4, x - stemW * 0.62, gy);
-    ctx.lineTo(x + stemW * 0.62, gy);
-    ctx.quadraticCurveTo(x + stemW * 0.62, gy - stemH * 0.4, x + stemW * 0.42, gy - stemH);
-    ctx.fill();
-    const cy = gy - stemH;
-    const rx = size * 0.95,
-      ry = size * 0.58;
-    // 갓 아래 주름(어두움)
-    ctx.fillStyle = '#e8c8b8';
-    ctx.beginPath();
-    ctx.ellipse(x, cy, rx * 0.92, ry * 0.22, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(150,100,90,0.5)';
-    ctx.lineWidth = 1;
-    for (let k = -8; k <= 8; k++) {
-      ctx.beginPath();
-      ctx.moveTo(x, cy + 2);
-      ctx.lineTo(x + (k / 8) * rx * 0.85, cy + ry * 0.12);
-      ctx.stroke();
-    }
-    // 갓 (반구, 왼쪽 위 광원)
-    const cg = ctx.createRadialGradient(x - rx * 0.35, cy - ry * 0.7, 2, x, cy - ry * 0.2, rx * 1.1);
-    cg.addColorStop(0, cl);
-    cg.addColorStop(0.45, cm);
-    cg.addColorStop(1, cd);
-    ctx.fillStyle = cg;
-    ctx.beginPath();
-    ctx.ellipse(x, cy, rx, ry, 0, Math.PI, 0);
-    ctx.quadraticCurveTo(x + rx * 0.5, cy + ry * 0.12, x, cy + ry * 0.1);
-    ctx.quadraticCurveTo(x - rx * 0.5, cy + ry * 0.12, x - rx, cy);
-    ctx.fill();
-    // 흰 점박이 (위쪽은 크게, 가장자리 작게)
-    for (let k = 0; k < 9; k++) {
-      const a = rng.range(Math.PI * 1.08, Math.PI * 1.92);
-      const rr = rng.range(0.3, 0.85);
-      const sx = x + Math.cos(a) * rx * rr,
-        sy = cy + Math.sin(a) * ry * rr;
-      const sr = size * rng.range(0.05, 0.1) * (1.1 - rr * 0.5);
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      ctx.beginPath();
-      ctx.ellipse(sx, sy, sr, sr * 0.75, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // 하이라이트
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.beginPath();
-    ctx.ellipse(x - rx * 0.35, cy - ry * 0.62, rx * 0.25, ry * 0.12, -0.4, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  const frontRow = rows.pop()!;
+  for (const row of rows) drawLeafRow(ctx, w, hs, rng, row);
+  // 거대 버섯 (HD 스프라이트, 왼쪽 위 광원) — 뒤쪽 잎 뭉치와 앞쪽 잎 뭉치 사이에 배치
+  const later = placeMushrooms(ctx, w, hs, rng, seed, 'mid');
+  drawLeafRow(ctx, w, hs, rng, frontRow);
+  for (const f2 of later) f2(); // 작은 군집은 앞 잎 뭉치 위에 (깊이감)
   // 꽃 핀 덩굴 (위로 감겨 올라감)
   for (let i = 0; i < w / 220; i++) {
     let x = rng.range(0, w);
@@ -646,5 +591,137 @@ export function buildMushroomLayer(viewW: number, viewH: number, worldW: number,
     ctx.fillStyle = '#ffe9a0';
     ctx.fillRect(Math.round(x) + 1, Math.round(y) + 1, 1, 1);
   }
-  return { canvas: c, factor: f, y: camTop * fy };
+  return cropRows({ canvas: c, factor: f, y: camTop * fy, res: MUSH_RES });
+}
+
+function drawLeafRow(ctx: CanvasRenderingContext2D, w: number, hs: number[], rng: Rng, [dy, step, cols]: [number, number, string[]]) {
+  for (let i = 0; i < w / step; i++) {
+    const x = rng.range(0, w);
+    const y = hs[Math.floor(x)] + dy + rng.range(-4, 6);
+    const r = rng.range(9, 20);
+    const gr = ctx.createRadialGradient(x - r * 0.35, y - r * 0.45, 1, x, y, r);
+    gr.addColorStop(0, cols[0]);
+    gr.addColorStop(0.55, cols[1]);
+    gr.addColorStop(1, cols[2]);
+    ctx.fillStyle = gr;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** 원경용: 채도↓, 숲 공기색으로 헤이즈 (픽셀 단위 처리, CSS 필터 미사용) */
+function hazeSprite(sp: MushSprite, amount: number): MushSprite {
+  const c = makeCanvas(sp.canvas.width, sp.canvas.height);
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(sp.canvas, 0, 0);
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  const d = img.data;
+  const air = [70, 120, 110];
+  for (let i = 0; i < d.length; i += 4) {
+    if (!d[i + 3]) continue;
+    const g = d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11;
+    for (let k = 0; k < 3; k++) {
+      const v = d[i + k] + (g - d[i + k]) * 0.5; // 채도 50%
+      d[i + k] = v + (air[k] - v) * amount;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return { canvas: c, ox: sp.ox, oy: sp.oy };
+}
+
+const spriteCache = new Map<string, MushSprite[]>();
+function mushPool(seed: number, tier: 'far' | 'mid'): { big: MushSprite[]; clusters: MushSprite[] } {
+  const key = `${tier}:${seed}`;
+  if (!spriteCache.has(key)) {
+    const big: MushSprite[] = [];
+    const kinds: MushKind[] = ['magic', 'forest'];
+    const n = tier === 'mid' ? 4 : 3;
+    for (const kind of kinds)
+      for (let v = 0; v < n; v++) {
+        const size = tier === 'mid' ? 22 + v * 7 : 11 + v * 3;
+        let sp = makeMushroom(kind, size, seed * 13 + v * 101 + (kind === 'magic' ? 7 : 3) + (tier === 'far' ? 5000 : 0));
+        if (tier === 'far') sp = hazeSprite(sp, 0.42);
+        big.push(sp);
+      }
+    spriteCache.set(key, big);
+    const clusters: MushSprite[] = [];
+    for (let v = 0; v < 5; v++) {
+      let sp = makeCluster(seed * 7 + v * 57 + (tier === 'far' ? 900 : 0), tier === 'mid' ? 8 + (v % 3) * 2 : 6);
+      if (tier === 'far') sp = hazeSprite(sp, 0.42);
+      clusters.push(sp);
+    }
+    spriteCache.set(key + ':c', clusters);
+  }
+  return { big: spriteCache.get(key)!, clusters: spriteCache.get(key + ':c')! };
+}
+
+/** 스프라이트를 밑동 기준으로 기울여 그림 (비율 유지, 월드 좌표) */
+function stamp(ctx: CanvasRenderingContext2D, sp: MushSprite, x: number, groundY: number, tilt: number, flip: boolean) {
+  const W = sp.canvas.width / MUSH_RES,
+    H = sp.canvas.height / MUSH_RES;
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.rotate(tilt);
+  if (flip) ctx.scale(-1, 1); // 좌우 반전만 (광원 방향 유지를 위해 큰 버섯에는 사용하지 않음)
+  ctx.drawImage(sp.canvas, -sp.ox * W, -sp.oy * H, W, H);
+  ctx.restore();
+}
+
+/** 버섯 배치: 간격·높이 불규칙, 큰 버섯 주변에 작은 군집 */
+function placeMushrooms(ctx: CanvasRenderingContext2D, w: number, hs: number[], rng: Rng, seed: number, tier: 'far' | 'mid'): (() => void)[] {
+  const later: (() => void)[] = [];
+  const pool = mushPool(seed, tier);
+  const gy = (x: number) => hs[Math.max(0, Math.min(w - 1, Math.floor(x)))];
+  let x = rng.range(20, 120);
+  let last = -1;
+  while (x < w - 20) {
+    let bi = rng.int(0, pool.big.length - 1);
+    if (bi === last) bi = (bi + 1 + rng.int(0, pool.big.length - 2)) % pool.big.length; // 같은 형태 연속 방지
+    last = bi;
+    const sp = pool.big[bi];
+    const ground = gy(x) + (tier === 'mid' ? rng.range(10, 18) : rng.range(6, 12));
+    const tilt = rng.range(-0.13, 0.13);
+    if (tier === 'mid') {
+      // 접지 그림자 (오른쪽 아래로 드리움)
+      const sw = sp.canvas.width / MUSH_RES / 2;
+      const gr = ctx.createRadialGradient(x + sw * 0.25, ground, 1, x + sw * 0.25, ground, sw);
+      gr.addColorStop(0, 'rgba(8,24,14,0.55)');
+      gr.addColorStop(1, 'rgba(8,24,14,0)');
+      ctx.fillStyle = gr;
+      ctx.beginPath();
+      ctx.ellipse(x + sw * 0.25, ground, sw, sw * 0.28, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    stamp(ctx, sp, x, ground, tilt, false);
+    // 주변 작은 군집 0~2개
+    const nc = rng.int(0, 2);
+    for (let k = 0; k < nc; k++) {
+      const cx = x + (k % 2 ? 1 : -1) * rng.range(22, 46) * (tier === 'mid' ? 1 : 0.6);
+      const cs = pool.clusters[rng.int(0, pool.clusters.length - 1)];
+      const cy = gy(cx) + (tier === 'mid' ? rng.range(2, 8) : rng.range(8, 14));
+      const ct = rng.range(-0.08, 0.08),
+        cf = rng.next() < 0.5;
+      const go = () => stamp(ctx, cs, cx, cy, ct, cf);
+      if (tier === 'mid') later.push(go);
+      else go();
+    }
+    x += tier === 'mid' ? rng.range(170, 430) : rng.range(90, 260);
+  }
+  return later;
+}
+
+/** 약초의 숲 원경 버섯: 작고 채도 낮은 실루엣층 */
+export function buildFarMushroomLayer(viewW: number, viewH: number, worldW: number, worldH: number, camTop: number, seed: number, f = 0.2): BgLayer {
+  const rng = new Rng(seed + 991);
+  const w = Math.ceil(viewW + (worldW - viewW) * f) + 4;
+  const fy = f * 0.6;
+  const h = Math.ceil(viewH + (worldH - viewH - camTop) * fy) + 4;
+  const c = makeCanvas(w * MUSH_RES, h * MUSH_RES);
+  const ctx = c.getContext('2d')!;
+  ctx.scale(MUSH_RES, MUSH_RES);
+  const ground = h * 0.5;
+  const hs = fbm(rng, w, 4).map((v) => ground - v * 50);
+  placeMushrooms(ctx, w, hs, rng, seed, 'far');
+  return cropRows({ canvas: c, factor: f, y: camTop * fy, res: MUSH_RES });
 }

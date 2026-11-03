@@ -11,7 +11,7 @@ import { WEAPONS, type WeaponId } from '../core/weapons';
 import { MAP_INFO, MAP_LIST, type MapId } from '../core/mapgen';
 import { drawGun, GUN_H, GUN_PIVOT_X, GUN_PIVOT_Y, GUN_RES, GUN_SCALE, GUN_W, makeCanvas, pixelSquare, smokePuff, softCircle } from './art';
 import { audio } from './audio';
-import { buildForestLayers, buildMushroomLayer, buildPineLayer, buildSkyLayers, buildVolcanoLayers, cloudsCanvas, skyCanvas } from './background';
+import { buildFarMushroomLayer, buildForestLayers, buildMushroomLayer, buildPineLayer, buildSkyLayers, buildVolcanoLayers, cloudsCanvas, skyCanvas } from './background';
 import { Effects } from './effects';
 import { PROJECTILE_ASSETS, ProjectileVisual } from './projectiles';
 import SPRITES from '../../public/chars2/manifest.json';
@@ -287,10 +287,10 @@ export class BattleScene extends Phaser.Scene {
     const g = this.game2;
     const info = g.map;
     const theme = info.id === 'volcano_lab' ? 'volcano' : info.id === 'sky_pharmacy' ? 'sky' : 'herb';
-    const addLayer = (l: { canvas: HTMLCanvasElement; factor: number; y: number }, key: string, depth: number) => {
+    const addLayer = (l: { canvas: HTMLCanvasElement; factor: number; y: number; res?: number; oy?: number }, key: string, depth: number) => {
       if (!this.textures.exists(key)) this.textures.addCanvas(key, l.canvas);
-      const img = this.add.image(0, 0, key).setOrigin(0).setDepth(depth);
-      this.bgImages.push({ img, factor: l.factor, y: l.y, kind: 'layer' });
+      const img = this.add.image(0, 0, key).setOrigin(0).setDepth(depth).setScale(1 / (l.res ?? 1));
+      this.bgImages.push({ img, factor: l.factor, y: l.y, kind: 'layer', oy: l.oy });
     };
     if (info.id === 'moon_base') {
       this.buildSpace(seed);
@@ -305,7 +305,8 @@ export class BattleScene extends Phaser.Scene {
       const img = this.add.image(0, 0, `bg_${info.backdrop}`).setOrigin(0).setDepth(-100).setScale(sc);
       this.bgImages.push({ img, factor: f, y: CAM_TOP * fy, kind: 'layer' });
       if (info.id === 'herb_forest') {
-        addLayer(buildMushroomLayer(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed, 0.3), `bg_mush_${seed}`, -88);
+        addLayer(buildFarMushroomLayer(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed, 0.2), `bg_mushfar_${seed}`, -92);
+        addLayer(buildMushroomLayer(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed, 0.3), `bg_mush2_${seed}`, -88);
       }
       if (info.id === 'ice_peaks') addLayer(buildPineLayer(VIEW_W, VIEW_H, g.worldW, g.worldH + CAM_EXTRA, CAM_TOP, seed), `bg_pine_${seed}`, -90);
     } else {
